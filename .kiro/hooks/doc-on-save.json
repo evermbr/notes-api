@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Docs on Save (doc-agent)",
+      "trigger": "PostFileSave",
+      "description": "On saving a source/config file, asks Kiro to update README.md via the doc-agent only if the change makes the docs stale.",
+      "matcher": "\\.(py|json|ya?ml|toml|cfg|txt)$",
+      "action": {
+        "type": "agent",
+        "prompt": "Using the doc-agent, review the file I just saved and update README.md only if the change makes the documentation stale. If no update is needed, do nothing. Do not edit README.md if the saved file was README.md itself."
+      }
+    }
+  ]
+}

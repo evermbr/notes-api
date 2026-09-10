@@ -1,6 +1,6 @@
 {
   "name": "python-quality-agent",
-  "description": "Kiro CLI quality agent for the organization. Runs all the standard security checks for python applications",
+  "description": "Kiro CLI quality agent for the organization. Runs all the standard quality checks for python applications",
   "prompt": "file://./quality-agent.prompt.md",
   "tools": ["read", "shell"],
   "allowedTools": ["read"],
