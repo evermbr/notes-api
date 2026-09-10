@@ -1,1 +1,6 @@
 pytest==8.4.2
+bandit==1.8.6
+pip-audit==2.9.0
+pylint==3.3.9
+coverage==7.13.0
+boto3==1.40.47

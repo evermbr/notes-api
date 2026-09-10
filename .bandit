@@ -1,0 +1,4 @@
+# Bandit configuration for the tech_summit project.
+# Exclude vendored / generated / test dirs from the recursive scan.
+[bandit]
+exclude = ./.venv,./tests,./cdk.out,./.git

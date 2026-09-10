@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Security Gate on Save (python-security-agent)",
+      "trigger": "PostFileSave",
+      "description": "On saving a Python file, asks Kiro to check security using the python-security-agent.",
+      "matcher": "\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "Using the python-security-agent, review the security of the file I just saved and any files changed versus HEAD. Keep it quick: report only new issues introduced (file:line + severity + fix) and end with the SECURITY_GATE verdict."
+      }
+    }
+  ]
+}

@@ -19,3 +19,33 @@ def test_sns_topic_created():
     template = assertions.Template.from_stack(stack)
 
     template.resource_count_is("AWS::SNS::Topic", 1)
+
+
+def test_dynamodb_table_created():
+    app = core.App()
+    stack = TechSummitStack(app, "tech-summit")
+    template = assertions.Template.from_stack(stack)
+
+    template.has_resource_properties("AWS::DynamoDB::Table", {
+        "BillingMode": "PAY_PER_REQUEST",
+        "KeySchema": [{"AttributeName": "code", "KeyType": "HASH"}],
+    })
+
+
+def test_shortener_lambda_created():
+    app = core.App()
+    stack = TechSummitStack(app, "tech-summit")
+    template = assertions.Template.from_stack(stack)
+
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "Handler": "handler.handler",
+        "Runtime": "python3.12",
+    })
+
+
+def test_function_url_created():
+    app = core.App()
+    stack = TechSummitStack(app, "tech-summit")
+    template = assertions.Template.from_stack(stack)
+
+    template.resource_count_is("AWS::Lambda::Url", 1)

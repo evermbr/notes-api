@@ -1,0 +1,30 @@
+{
+  "name": "python-quality-agent",
+  "description": "Kiro CLI quality agent for the organization. Runs all the standard security checks for python applications",
+  "prompt": "file://./quality-agent.prompt.md",
+  "tools": ["read", "shell"],
+  "allowedTools": ["read"],
+  "resources": [
+    "file://.kiro/steering/**/*.md"
+  ],
+  "permissions": {
+    "rules": [
+      { "capability": "fs_read", "match": ["**"], "effect": "allow" },
+      { "capability": "shell", "match": [
+          "[ -d .venv ]*",
+          "pylint *",
+          "pytest*",
+          "python3 -m pytest*",
+          "coverage *",
+          "git diff*", "git log*", "git status*", "git show*",
+          "source .venv/bin/activate*", ". .venv/bin/activate*",
+          "cat *", "ls *", "grep *", "echo *"
+        ], "effect": "allow" },
+      { "capability": "shell", "match": [
+          "cdk deploy*", "cdk destroy*",
+          "aws *delete*", "aws *terminate*", "aws *put*", "aws *create*",
+          "rm -rf *", "sudo *", "git push*"
+        ], "effect": "deny" }
+    ]
+  }
+}

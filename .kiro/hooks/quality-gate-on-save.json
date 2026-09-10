@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Quality Gate on Save (python-quality-agent)",
+      "trigger": "PostFileSave",
+      "description": "On saving a Python file, asks Kiro to check quality using the python-quality-agent.",
+      "matcher": "\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "Using the python-quality-agent, review the quality of the file I just saved and any files changed versus HEAD. Keep it quick: report only new issues introduced (file:line + fix) and end with the QUALITY_GATE verdict."
+      }
+    }
+  ]
+}
