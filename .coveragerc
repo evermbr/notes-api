@@ -7,6 +7,8 @@ omit =
     tests/*
     .venv/*
     cdk.out/*
+    .security-reports/*
+    .quality-reports/*
     app.py
     tech_summit/pipeline_stack.py
     tech_summit/kiro_cli_step.py
