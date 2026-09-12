@@ -21,10 +21,13 @@ from tech_summit.source_config import SourceConfig
 from tech_summit.kiro_cli_step import KiroCliStep
 
 # Install gitleaks for the security step (over the full git history in CI).
+# Pinned to a specific release + the linux_x64 asset (CodeBuild STANDARD_7_0 runs on
+# Linux x64); the release asset names use `linux_x64`, not `$(uname -m)` = x86_64.
+_GITLEAKS_VERSION = "8.30.1"
 _GITLEAKS_INSTALL = (
     "curl -fsSL "
-    '"https://github.com/gitleaks/gitleaks/releases/latest/download/'
-    'gitleaks_$(uname -s)_$(uname -m).tar.gz" '
+    f'"https://github.com/gitleaks/gitleaks/releases/download/v{_GITLEAKS_VERSION}/'
+    f'gitleaks_{_GITLEAKS_VERSION}_linux_x64.tar.gz" '
     "| tar -xz -C /usr/local/bin gitleaks"
 )
 

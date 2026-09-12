@@ -40,7 +40,7 @@ class KiroCliStep(PipelineProject):
         env_vars = {
             "KIRO_API_KEY": BuildEnvironmentVariable(
                 type=BuildEnvironmentVariableType.SECRETS_MANAGER,
-                value=f"{kiro_secret.secret_arn}:KIRO_API_KEY",
+                value=kiro_secret.secret_arn,
             ),
         }
         for key, val in (extra_env or {}).items():
@@ -51,16 +51,21 @@ class KiroCliStep(PipelineProject):
             "phases": {
                 "install": {
                     "commands": [
-                        "pip install --quiet -r requirements.txt -r requirements-dev.txt",
+                        "pip3 install -r requirements.txt -r requirements-dev.txt",
                         *(extra_install or []),
-                        "curl -fsSL https://kiro.dev/install-cli.sh | bash",
-                        'export PATH="$HOME/.local/bin:$PATH"',
+                        "curl -fsSL https://cli.kiro.dev/install | bash",
                     ],
                 },
                 "build": {
                     "commands": [
-                        "set -o pipefail",
-                        f'kiro-cli chat --agent {agent} --no-interactive "{task}" '
+                        # kiro-cli installs to ~/.local/bin; PATH is set inline because
+                        # exports from the install phase do not persist to build.
+                        # --trust-tools lets the agent run read/shell tools without an
+                        # interactive approver (headless CI). Dangerous commands are
+                        # still blocked by the agent's permissions.rules deny list.
+                        'export PATH="$HOME/.local/bin:$PATH" && '
+                        f"kiro-cli chat --agent {agent} --no-interactive "
+                        f'--trust-tools=read,shell "{task}" '
                         f"2>&1 | tee {out_file}",
                         f'if grep -q "{gate}: FAIL" {out_file}; then '
                         f'echo "{gate} FAILED"; exit 1; fi',

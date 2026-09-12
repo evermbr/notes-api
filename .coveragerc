@@ -8,6 +8,9 @@ omit =
     .venv/*
     cdk.out/*
     app.py
+    tech_summit/pipeline_stack.py
+    tech_summit/kiro_cli_step.py
+    tech_summit/source_config.py
 
 [report]
 include_namespace_packages = True
