@@ -34,14 +34,11 @@ def _handler_module(monkeypatch):
 
 
 def _post_event(body):
-    return {
-        "requestContext": {"http": {"method": "POST", "path": "/"}},
-        "body": body,
-    }
+    return {"httpMethod": "POST", "path": "/", "body": body}
 
 
 def _get_event(path):
-    return {"requestContext": {"http": {"method": "GET", "path": path}}}
+    return {"httpMethod": "GET", "path": path}
 
 
 def test_create_short_url_success(handler_module):
@@ -84,7 +81,7 @@ def test_get_without_code(handler_module):
 
 
 def test_method_not_allowed(handler_module):
-    event = {"requestContext": {"http": {"method": "DELETE", "path": "/"}}}
+    event = {"httpMethod": "DELETE", "path": "/"}
     resp = handler_module.handler(event)
     assert resp["statusCode"] == 405
 

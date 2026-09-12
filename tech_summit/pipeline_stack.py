@@ -62,6 +62,8 @@ class PipelineStack(Stack):
             branch=source.branch,
             connection_arn=source.connection_arn,
             output=source_output,
+            # Full git clone (includes .git) so gitleaks can scan commit history.
+            code_build_clone_output=True,
         )
 
         # --- gate steps (Kiro CLI agents, headless) --------------------------

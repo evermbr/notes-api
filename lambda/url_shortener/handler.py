@@ -71,10 +71,9 @@ def _redirect(code: str) -> dict:
 
 
 def handler(event: dict, _context=None) -> dict:
-    """Route a Function URL request to create or redirect based on method/path."""
-    ctx = event.get("requestContext", {}).get("http", {})
-    method = ctx.get("method", "GET")
-    path = ctx.get("path", "/")
+    """Route an API Gateway REST request to create or redirect based on method/path."""
+    method = event.get("httpMethod", "GET")
+    path = event.get("path", "/")
 
     if method == "POST":
         return _create_short_url(event)
