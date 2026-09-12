@@ -1,6 +1,6 @@
 """Lambda handler for a minimal URL shortener backed by DynamoDB.
 
-Invoked through a Lambda Function URL:
+Invoked through an API Gateway REST proxy integration:
   * ``POST /``            body ``{"url": "https://..."}`` -> creates a short code
   * ``GET  /{code}``      -> HTTP 302 redirect to the original URL (404 if unknown)
 """

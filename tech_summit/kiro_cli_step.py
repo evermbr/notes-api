@@ -55,12 +55,12 @@ class KiroCliStep(PipelineProject):
                     "commands": [
                         # kiro-cli installs to ~/.local/bin; PATH is set inline because
                         # exports from the install phase do not persist to build.
-                        # --trust-tools lets the agent run read/shell tools without an
-                        # interactive approver (headless CI). Dangerous commands are
-                        # still blocked by the agent's permissions.rules deny list.
+                        # --trust-all-tools auto-approves tools in headless CI (no
+                        # interactive approver). The agent's permissions.rules deny
+                        # list still blocks deploy/destroy/push, so this stays safe.
                         'export PATH="$HOME/.local/bin:$PATH" && '
                         f"kiro-cli chat --agent {agent} --no-interactive "
-                        f'--trust-tools=read,shell "{task}" '
+                        f'--trust-all-tools "{task}" '
                         f"2>&1 | tee {out_file}",
                         f'if grep -q "{gate}: FAIL" {out_file}; then '
                         f'echo "{gate} FAILED"; exit 1; fi',
