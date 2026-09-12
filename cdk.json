@@ -15,6 +15,13 @@
     ]
   },
   "context": {
+    "sourceConfig": {
+      "owner": "francoabregu",
+      "repo": "tech-summit-demo",
+      "branch": "main",
+      "connectionArn": "arn:aws:codeconnections:us-east-1:284051759444:connection/6761d530-4b73-4a74-bb41-99383a131498",
+      "kiroSecretArn": "arn:aws:secretsmanager:us-east-1:284051759444:secret:kiro-cli-key-UfsBC5"
+    },
     "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true,
     "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": true,
     "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,

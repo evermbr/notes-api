@@ -23,5 +23,3 @@ cdk.out/
 # Reports
 .quality-reports/
 .security-reports/
-ci/
-.coveragerc
