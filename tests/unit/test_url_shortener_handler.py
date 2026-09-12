@@ -87,3 +87,23 @@ def test_method_not_allowed(handler_module):
     event = {"requestContext": {"http": {"method": "DELETE", "path": "/"}}}
     resp = handler_module.handler(event)
     assert resp["statusCode"] == 405
+
+
+def test_table_uses_configured_name(monkeypatch):
+    """_table() resolves the real DynamoDB table by the configured TABLE_NAME.
+
+    This imports the handler without the fixture's _table patch, so the real
+    _table() body (the _dynamodb.Table lookup) is exercised.
+    """
+    monkeypatch.setenv("TABLE_NAME", "some-table")
+    module = importlib.import_module("handler")
+    importlib.reload(module)
+
+    captured = {}
+    monkeypatch.setattr(
+        module._dynamodb,
+        "Table",
+        lambda name: captured.setdefault("name", name),
+    )
+    module._table()
+    assert captured["name"] == module._TABLE_NAME

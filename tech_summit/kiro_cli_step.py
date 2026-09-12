@@ -11,11 +11,11 @@ from aws_cdk.aws_codebuild import (
     PipelineProject,
     BuildSpec,
     BuildEnvironment,
-    IBuildImage,
     BuildEnvironmentVariable,
     BuildEnvironmentVariableType,
 )
-from aws_cdk.aws_secretsmanager import ISecret
+
+from tech_summit.kiro_cli_step_props import KiroCliStepProps
 
 
 class KiroCliStep(PipelineProject):
@@ -25,25 +25,20 @@ class KiroCliStep(PipelineProject):
         self,
         scope: Construct,
         construct_id: str,
-        *,
-        agent: str,
-        gate: str,
-        task: str,
-        kiro_secret: ISecret,
-        build_image: IBuildImage,
-        out_file: str | None = None,
-        extra_install: list[str] | None = None,
-        extra_env: dict | None = None,
+        props: KiroCliStepProps,
     ) -> None:
-        out_file = out_file or f"{agent}.out"
+        agent = props.agent
+        gate = props.gate
+        task = props.task
+        out_file = props.out_file or f"{agent}.out"
 
         env_vars = {
             "KIRO_API_KEY": BuildEnvironmentVariable(
                 type=BuildEnvironmentVariableType.SECRETS_MANAGER,
-                value=kiro_secret.secret_arn,
+                value=props.kiro_secret.secret_arn,
             ),
         }
-        for key, val in (extra_env or {}).items():
+        for key, val in props.extra_env.items():
             env_vars[key] = BuildEnvironmentVariable(value=val)
 
         build_spec = BuildSpec.from_object({
@@ -52,7 +47,7 @@ class KiroCliStep(PipelineProject):
                 "install": {
                     "commands": [
                         "pip3 install -r requirements.txt -r requirements-dev.txt",
-                        *(extra_install or []),
+                        *props.extra_install,
                         "curl -fsSL https://cli.kiro.dev/install | bash",
                     ],
                 },
@@ -80,8 +75,8 @@ class KiroCliStep(PipelineProject):
             scope,
             construct_id,
             build_spec=build_spec,
-            environment=BuildEnvironment(build_image=build_image),
+            environment=BuildEnvironment(build_image=props.build_image),
             environment_variables=env_vars,
         )
 
-        kiro_secret.grant_read(self)
+        props.kiro_secret.grant_read(self)

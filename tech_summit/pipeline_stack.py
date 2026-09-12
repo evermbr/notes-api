@@ -19,6 +19,7 @@ from aws_cdk.aws_secretsmanager import Secret
 
 from tech_summit.source_config import SourceConfig
 from tech_summit.kiro_cli_step import KiroCliStep
+from tech_summit.kiro_cli_step_props import KiroCliStepProps
 
 # Install gitleaks for the security step (over the full git history in CI).
 # Pinned to a specific release + the linux_x64 asset (CodeBuild STANDARD_7_0 runs on
@@ -64,8 +65,7 @@ class PipelineStack(Stack):
         )
 
         # --- gate steps (Kiro CLI agents, headless) --------------------------
-        quality_step = KiroCliStep(
-            self, "QualityCheckProject",
+        quality_step = KiroCliStep(self, "QualityCheckProject", KiroCliStepProps(
             agent="python-quality-agent",
             gate="QUALITY_GATE",
             task=(
@@ -75,9 +75,8 @@ class PipelineStack(Stack):
             ),
             kiro_secret=kiro_secret,
             build_image=LinuxBuildImage.STANDARD_7_0,
-        )
-        security_step = KiroCliStep(
-            self, "SecurityCheckProject",
+        ))
+        security_step = KiroCliStep(self, "SecurityCheckProject", KiroCliStepProps(
             agent="python-security-agent",
             gate="SECURITY_GATE",
             task=(
@@ -90,7 +89,7 @@ class PipelineStack(Stack):
             # gitleaks over the full history; CI=true switches the agent to `detect`.
             extra_install=[_GITLEAKS_INSTALL],
             extra_env={"CI": "true"},
-        )
+        ))
 
         quality_action = CodeBuildAction(
             action_name="QualityCheck",
