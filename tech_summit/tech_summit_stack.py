@@ -155,10 +155,22 @@ class TechSummitStack(Stack):
         NagSuppressions.add_resource_suppressions(
             api,
             [
-                {"id": "AwsSolutions-APIG1", "reason": "Access logging out of scope for the demo."},
-                {"id": "AwsSolutions-APIG2", "reason": "Request validation out of scope; the Lambda validates input."},
-                {"id": "AwsSolutions-APIG6", "reason": "Per-method CloudWatch logging out of scope for the demo."},
-                {"id": "AwsSolutions-APIG3", "reason": "WAFv2 web ACL out of scope for the demo."},
+                {
+                    "id": "AwsSolutions-APIG1",
+                    "reason": "Access logging out of scope for the demo.",
+                },
+                {
+                    "id": "AwsSolutions-APIG2",
+                    "reason": "Request validation out of scope; the Lambda validates input.",
+                },
+                {
+                    "id": "AwsSolutions-APIG6",
+                    "reason": "Per-method CloudWatch logging out of scope for the demo.",
+                },
+                {
+                    "id": "AwsSolutions-APIG3",
+                    "reason": "WAFv2 web ACL out of scope for the demo.",
+                },
                 {
                     "id": "AwsSolutions-COG4",
                     "reason": (
