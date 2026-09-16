@@ -30,7 +30,7 @@ def test_shortener_lambda_created():
 
     template.has_resource_properties("AWS::Lambda::Function", {
         "Handler": "handler.handler",
-        "Runtime": "python3.12",
+        "Runtime": "python3.13",
     })
 
 

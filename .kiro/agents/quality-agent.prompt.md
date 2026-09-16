@@ -87,14 +87,16 @@ Under this banner, show the raw, unedited output of each tool, each under its ow
                       QUALITY SUMMARY
 ================================================================
 ```
-Under this banner, print the summary table:
+Under this banner, print one flat aligned line per check — NOT a markdown table. Pad the
+check name to 10 chars and the status to 6 so the columns line up in a plain-text log.
+Keep the metric SHORT (value + gate only, no prose):
 
-| Check | Status | Key metric |
-|-------|--------|------------|
-| pylint | … | score / gate |
-| pytest | … | passed / failed |
-| coverage | … | % / fail_under |
-| ai-review | … | findings |
+```
+pylint     PASS   10.00/10 (gate 8.0)
+pytest     PASS   18 passed / 0 failed
+coverage   PASS   100.0% (gate 80)
+ai-review  PASS   0 defects
+```
 
 Then, only if there are findings, a `--- Findings ---` section: one compact bullet per finding with
 `file:line | issue | fix`. Call out untested code paths explicitly. For a legitimate false positive,

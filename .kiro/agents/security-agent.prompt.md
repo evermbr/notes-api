@@ -75,15 +75,17 @@ Under this banner, show the raw, unedited output of each tool, each under its ow
                       SECURITY SUMMARY
 ================================================================
 ```
-Under this banner, print the summary table:
+Under this banner, print one flat aligned line per source — NOT a markdown table. Pad the
+source name to 20 chars and the status to 6 so the columns line up in a plain-text log.
+Format: `<source>  <STATUS>  <#findings> findings  <highest severity>`:
 
-| Source | Status | # Findings | Highest severity |
-|--------|--------|------------|------------------|
-| bandit | … | … | … |
-| pip-audit (runtime) | … | … | … |
-| pip-audit (dev) | … | … | … |
-| gitleaks | … | … | … |
-| ai-review | … | … | … |
+```
+bandit                PASS   0 findings  -
+pip-audit (runtime)   PASS   0 findings  -
+pip-audit (dev)       PASS   1 finding   LOW
+gitleaks              PASS   0 findings  -
+ai-review             PASS   0 findings  -
+```
 
 Then, only if there are findings, a `--- Findings ---` section: one compact bullet per finding with
 `[SEVERITY] id | file:line | one-line why | fix`. For a legitimate false positive say so and show the

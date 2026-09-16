@@ -48,6 +48,9 @@ class KiroCliStep(PipelineProject):
             "version": "0.2",
             "phases": {
                 "install": {
+                    # Pin runtimes: Node 20+ for the CDK CLI (STANDARD_7_0 defaults to
+                    # an EOL Node 18 that the CDK CLI rejects), Python 3.12 for the tools.
+                    "runtime-versions": {"nodejs": "22", "python": "3.12"},
                     "commands": [
                         "pip3 install -r requirements.txt -r requirements-dev.txt",
                         *props.extra_install,

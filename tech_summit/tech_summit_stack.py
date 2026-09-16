@@ -23,6 +23,7 @@ from aws_cdk.aws_apigateway import (
     AuthorizationType,
 )
 from aws_cdk.aws_secretsmanager import Secret, SecretStringGenerator
+from cdk_nag import NagSuppressions
 
 
 class TechSummitStack(Stack):
@@ -46,7 +47,7 @@ class TechSummitStack(Stack):
         shortener = Function(
             self,
             "UrlShortenerFunction",
-            runtime=Runtime.PYTHON_3_12,
+            runtime=Runtime.PYTHON_3_13,
             handler="handler.handler",
             code=Code.from_asset("lambda/url_shortener"),
             timeout=Duration.seconds(10),
@@ -71,7 +72,7 @@ class TechSummitStack(Stack):
         authorizer_fn = Function(
             self,
             "ApiAuthorizerFunction",
-            runtime=Runtime.PYTHON_3_12,
+            runtime=Runtime.PYTHON_3_13,
             handler="handler.handler",
             code=Code.from_asset("lambda/authorizer"),
             timeout=Duration.seconds(10),
@@ -89,7 +90,7 @@ class TechSummitStack(Stack):
 
         # API Gateway REST API fronting the Lambda. Every method/path is proxied to the
         # handler and protected by the token authorizer.
-        LambdaRestApi(
+        api = LambdaRestApi(
             self,
             "UrlShortenerApi",
             handler=shortener,
@@ -98,4 +99,73 @@ class TechSummitStack(Stack):
                 authorizer=authorizer,
                 authorization_type=AuthorizationType.CUSTOM,
             ),
+        )
+
+        # cdk-nag suppressions ------------------------------------------------
+        # AwsSolutions-IAM4: both Lambda service roles use the AWS-managed
+        # AWSLambdaBasicExecutionRole. That policy only grants CloudWatch Logs
+        # write access (the standard CDK Lambda default); replacing it with a
+        # customer-managed policy would just duplicate those same permissions.
+        NagSuppressions.add_resource_suppressions(
+            [shortener, authorizer_fn],
+            [
+                {
+                    "id": "AwsSolutions-IAM4",
+                    "reason": (
+                        "Lambda execution role uses the AWS-managed "
+                        "AWSLambdaBasicExecutionRole for CloudWatch Logs access only; "
+                        "a customer-managed policy would merely replicate it."
+                    ),
+                    "appliesTo": [
+                        "Policy::arn:<AWS::Partition>:iam::aws:policy/"
+                        "service-role/AWSLambdaBasicExecutionRole"
+                    ],
+                },
+                {
+                    "id": "AwsSolutions-L1",
+                    "reason": (
+                        "Pinned to Python 3.13, a supported and stable Lambda runtime. "
+                        "We intentionally stay one minor behind the newest (3.14) rather "
+                        "than track the bleeding edge on every CDK release."
+                    ),
+                },
+            ],
+            apply_to_children=True,
+        )
+
+        # AwsSolutions-SMG4: the API key secret has no automatic rotation. Rotation
+        # needs a rotation Lambda + a consumer that tolerates key changes; out of scope
+        # for this demo, where the key is static and read by the authorizer.
+        NagSuppressions.add_resource_suppressions(
+            api_key_secret,
+            [
+                {
+                    "id": "AwsSolutions-SMG4",
+                    "reason": (
+                        "Static API key for a demo; automatic rotation is out of scope "
+                        "(no rotation Lambda / rotation-aware consumer)."
+                    ),
+                },
+            ],
+        )
+
+        # API Gateway findings — out of scope for this demo. The API already sits behind
+        # a Lambda token authorizer; access/method logging, request validation, WAF and a
+        # Cognito user pool are production hardening we intentionally skip here.
+        NagSuppressions.add_resource_suppressions(
+            api,
+            [
+                {"id": "AwsSolutions-APIG1", "reason": "Access logging out of scope for the demo."},
+                {"id": "AwsSolutions-APIG2", "reason": "Request validation out of scope; the Lambda validates input."},
+                {"id": "AwsSolutions-APIG6", "reason": "Per-method CloudWatch logging out of scope for the demo."},
+                {"id": "AwsSolutions-APIG3", "reason": "WAFv2 web ACL out of scope for the demo."},
+                {
+                    "id": "AwsSolutions-COG4",
+                    "reason": (
+                        "The API is guarded by a Lambda token authorizer by design; a "
+                        "Cognito user pool is not used for this demo."
+                    ),
+                },
+            ],
+            apply_to_children=True,
         )
