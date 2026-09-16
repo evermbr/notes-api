@@ -1,0 +1,29 @@
+{
+  "name": "deploy-agent",
+  "description": "Kiro CLI deploy agent for the tech_summit CDK app. Runs cdk synth, cdk diff and cdk deploy for the application stack (deployment_type=app). Never touches the pipeline stack and never destroys resources.",
+  "prompt": "file://./deploy-agent.prompt.md",
+  "tools": ["read", "shell"],
+  "allowedTools": ["read"],
+  "resources": [
+    "file://.kiro/steering/**/*.md"
+  ],
+  "permissions": {
+    "rules": [
+      { "capability": "fs_read", "match": ["**"], "effect": "allow" },
+      { "capability": "shell", "match": [
+          "cdk synth*",
+          "cdk diff*",
+          "cdk deploy*",
+          "cdk ls*",
+          "[ -d .venv ]*",
+          "source .venv/bin/activate*", ". .venv/bin/activate*",
+          "cat *", "ls *", "grep *", "echo *"
+        ], "effect": "allow" },
+      { "capability": "shell", "match": [
+          "cdk destroy*",
+          "aws *delete*", "aws *terminate*",
+          "rm -rf *", "sudo *", "git push*"
+        ], "effect": "deny" }
+    ]
+  }
+}

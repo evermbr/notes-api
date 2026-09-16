@@ -37,6 +37,9 @@ class KiroCliStep(PipelineProject):
                 type=BuildEnvironmentVariableType.SECRETS_MANAGER,
                 value=props.kiro_secret.secret_arn,
             ),
+            # Every step runs in CodeBuild (ephemeral CI): agents skip the virtualenv
+            # and gitleaks scans full history when CI is set.
+            "CI": BuildEnvironmentVariable(value="true"),
         }
         for key, val in props.extra_env.items():
             env_vars[key] = BuildEnvironmentVariable(value=val)

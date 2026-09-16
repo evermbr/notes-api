@@ -2,25 +2,69 @@
   "name": "doc-agent",
   "description": "Kiro agent that keeps README.md up to date. On a file save it decides whether the change makes the docs stale and, only if necessary, edits README.md — nothing else.",
   "prompt": "file://./doc-agent.prompt.md",
-  "tools": ["read", "shell", "write"],
-  "allowedTools": ["read"],
+  "tools": [
+    "read",
+    "shell",
+    "write"
+  ],
+  "allowedTools": [
+    "read"
+  ],
   "resources": [
     "file://.kiro/steering/**/*.md"
   ],
   "permissions": {
     "rules": [
-      { "capability": "fs_read", "match": ["**"], "effect": "allow" },
-      { "capability": "fs_write", "match": ["README.md"], "effect": "allow" },
-      { "capability": "fs_write", "match": ["**"], "effect": "deny" },
-      { "capability": "shell", "match": [
-          "git diff*", "git log*", "git status*", "git show*",
-          "cat *", "ls *", "grep *"
-        ], "effect": "allow" },
-      { "capability": "shell", "match": [
-          "cdk deploy*", "cdk destroy*",
-          "aws *delete*", "aws *terminate*", "aws *put*", "aws *create*",
-          "rm -rf *", "sudo *", "git push*", "git commit*"
-        ], "effect": "deny" }
+      {
+        "capability": "fs_read",
+        "match": [
+          "**"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "fs_write",
+        "match": [
+          "README.md"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "fs_write",
+        "match": [
+          "**"
+        ],
+        "effect": "deny"
+      },
+      {
+        "capability": "shell",
+        "match": [
+          "git diff*",
+          "git log*",
+          "git status*",
+          "git show*",
+          "cat *",
+          "ls *",
+          "grep *"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "shell",
+        "match": [
+          "cdk deploy*",
+          "cdk destroy*",
+          "aws *delete*",
+          "aws *terminate*",
+          "aws *put*",
+          "aws *create*",
+          "rm -rf *",
+          "sudo *",
+          "git push*",
+          "git commit*"
+        ],
+        "effect": "deny"
+      }
     ]
   }
 }

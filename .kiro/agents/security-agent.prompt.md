@@ -8,9 +8,14 @@ Run every tool yourself with the exact commands below — do not rely on any wra
 - Bandit: go straight to a compatible interpreter (do not "try then retry").
 - Do not re-run a tool that already produced usable output.
 
-## Setup
+## Setup — virtualenv rule (determined by the `CI` environment variable)
 
-All commands run from the project root. Activate the venv (if present) as part of the same chained command below.
+All commands run from the project root.
+
+- **Local (`CI` is NOT set):** always use a virtualenv — create it if missing and activate it.
+- **Pipeline / CI (`CI` is set):** never use a virtualenv (CodeBuild is ephemeral); use the environment's Python directly.
+
+The chained command below encodes exactly this: it only sets up/activates `.venv` when `CI` is unset.
 
 ## Your job — three scanners + an AI review
 
@@ -22,7 +27,7 @@ gitleaks runs ONCE, depending on where the agent is running:
 The `CI` environment variable is set by the pipeline, so branch on it. Always use `--redact`.
 
 ```bash
-[ -d .venv ] && source .venv/bin/activate; \
+if [ -z "$CI" ]; then python3 -m venv .venv && source .venv/bin/activate; fi; \
 echo "===== BANDIT ====="; bandit -r . ; \
 echo "===== PIP-AUDIT (runtime) ====="; pip-audit -r requirements.txt ; \
 echo "===== PIP-AUDIT (dev) ====="; pip-audit -r requirements-dev.txt ; \
@@ -50,16 +55,53 @@ Review the ENTIRE repository, not just the diff — read all first-party source 
 
 Map each AI finding to a CWE where possible (e.g. CWE-798 hard-coded credentials, CWE-89 SQL injection, CWE-732 permissions) and assign a severity (LOW/MEDIUM/HIGH/CRITICAL) using CVSS-style reasoning.
 
-## How to report
+## Output format — IMPORTANT
 
-- One summary table: source (bandit / pip-audit / gitleaks / ai-review) | status (PASS/FAIL) | # findings | highest severity.
-- For each finding: id (rule id, CVE/GHSA, or CWE for AI findings), the file/resource + line, why it matters, and the concrete fix (show a code/CDK snippet when useful).
-- Separate real issues from noise. For a legitimate false positive, say so and show how to suppress it correctly (Bandit `# nosec` with justification). Never blanket-disable a scanner or hand-wave an AI finding away without reasoning.
+Your visible output is read by a human scrolling CI logs, so keep it clean:
 
-## Exit behavior (important for CI + git hook)
+- **Do NOT narrate.** No "I'll start by…", "Let me…", "Now I'll…". No step-by-step thinking in the output. Run the tools, then print the report — nothing else.
+- Produce your final answer in EXACTLY the structure below, using these box banners verbatim so each section is easy to spot in the logs.
 
-- If ANY source (scanner OR your AI review) has a HIGH/CRITICAL finding, end your response with a line `SECURITY_GATE: FAIL` so the caller can block the push/pipeline.
-- Otherwise end with `SECURITY_GATE: PASS`.
+```
+================================================================
+                   SECURITY SCAN - RAW OUTPUT
+================================================================
+```
+Under this banner, show the raw, unedited output of each tool, each under its own sub-header:
+`--- bandit ---`, `--- pip-audit (runtime) ---`, `--- pip-audit (dev) ---`, `--- gitleaks ---`.
+
+```
+================================================================
+                      SECURITY SUMMARY
+================================================================
+```
+Under this banner, print the summary table:
+
+| Source | Status | # Findings | Highest severity |
+|--------|--------|------------|------------------|
+| bandit | … | … | … |
+| pip-audit (runtime) | … | … | … |
+| pip-audit (dev) | … | … | … |
+| gitleaks | … | … | … |
+| ai-review | … | … | … |
+
+Then, only if there are findings, a `--- Findings ---` section: one compact bullet per finding with
+`[SEVERITY] id | file:line | one-line why | fix`. For a legitimate false positive say so and show the
+correct suppression (Bandit `# nosec` with justification). Never blanket-disable a scanner or hand-wave
+a finding away.
+
+## Exit behavior — final verdict
+
+End your response with a final banner and the machine-readable verdict on its own line:
+
+```
+================================================================
+                            VERDICT
+================================================================
+SECURITY_GATE: PASS
+```
+
+- Use `SECURITY_GATE: FAIL` if ANY source (scanner OR your AI review) has a HIGH/CRITICAL finding; otherwise `SECURITY_GATE: PASS`. This line MUST be the last line of your output so the pipeline can gate on it.
 
 ## Guardrails (from org + team steering, loaded as resources)
 

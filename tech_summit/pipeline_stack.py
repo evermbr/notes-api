@@ -16,21 +16,11 @@ from aws_cdk.aws_codepipeline_actions import (
 )
 from aws_cdk.aws_codebuild import LinuxBuildImage
 from aws_cdk.aws_secretsmanager import Secret
+from aws_cdk import aws_iam as iam
 
 from tech_summit.source_config import SourceConfig
 from tech_summit.kiro_cli_step import KiroCliStep
 from tech_summit.kiro_cli_step_props import KiroCliStepProps
-
-# Install gitleaks for the security step (over the full git history in CI).
-# Pinned to a specific release + the linux_x64 asset (CodeBuild STANDARD_7_0 runs on
-# Linux x64); the release asset names use `linux_x64`, not `$(uname -m)` = x86_64.
-_GITLEAKS_VERSION = "8.30.1"
-_GITLEAKS_INSTALL = (
-    "curl -fsSL "
-    f'"https://github.com/gitleaks/gitleaks/releases/download/v{_GITLEAKS_VERSION}/'
-    f'gitleaks_{_GITLEAKS_VERSION}_linux_x64.tar.gz" '
-    "| tar -xz -C /usr/local/bin gitleaks"
-)
 
 
 class PipelineStack(Stack):
@@ -88,9 +78,35 @@ class PipelineStack(Stack):
             ),
             kiro_secret=kiro_secret,
             build_image=LinuxBuildImage.STANDARD_7_0,
-            # gitleaks over the full history; CI=true switches the agent to `detect`.
-            extra_install=[_GITLEAKS_INSTALL],
-            extra_env={"CI": "true"},
+            # gitleaks (pinned linux_x64 asset). CI=true (set by KiroCliStep) makes the
+            # agent run `gitleaks detect` over the full git history.
+            extra_install=[
+                'curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/'
+                'v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" '
+                "| tar -xz -C /usr/local/bin gitleaks"
+            ],
+        ))
+
+        # --- deploy step (Kiro CLI deploy agent, headless) -------------------
+        deploy_step = KiroCliStep(self, "DeployProject", KiroCliStepProps(
+            agent="deploy-agent",
+            gate="DEPLOY",
+            task=(
+                "Deploy the application stack: run "
+                "`cdk deploy -c deployment_type=app --require-approval never`. "
+                "Report the stack status and outputs, and end with the DEPLOY verdict."
+            ),
+            kiro_secret=kiro_secret,
+            build_image=LinuxBuildImage.STANDARD_7_0,
+            # Node is needed for the AWS CDK CLI in the deploy step.
+            extra_install=["npm install -g aws-cdk"],
+        ))
+        # Least privilege: `cdk deploy` (bootstrap v2) works by assuming the CDK
+        # bootstrap roles, which in turn talk to CloudFormation and create resources.
+        # The CodeBuild role therefore only needs to assume those cdk-* roles.
+        deploy_step.role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["sts:AssumeRole"],
+            resources=[f"arn:aws:iam::{self.account}:role/cdk-*"],
         ))
 
         quality_action = CodeBuildAction(
@@ -101,6 +117,11 @@ class PipelineStack(Stack):
         security_action = CodeBuildAction(
             action_name="SecurityCheck",
             project=security_step,
+            input=source_output,
+        )
+        deploy_action = CodeBuildAction(
+            action_name="Deploy",
+            project=deploy_step,
             input=source_output,
         )
 
@@ -116,5 +137,6 @@ class PipelineStack(Stack):
                     stage_name="CodeValidation",
                     actions=[quality_action, security_action],
                 ),
+                StageProps(stage_name="Deploy", actions=[deploy_action]),
             ],
         )

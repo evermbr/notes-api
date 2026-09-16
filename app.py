@@ -14,7 +14,7 @@ application stack, not to the CI pipeline stack.
 
 import os
 
-from aws_cdk import App, Aspects, Environment
+from aws_cdk import App, Aspects, Environment, Tags
 from cdk_nag import AwsSolutionsChecks
 
 from tech_summit.tech_summit_stack import TechSummitStack
@@ -67,5 +67,13 @@ else:
         source=source,
         kiro_secret_arn=cfg["kiroSecretArn"],
     )
+
+# Org-mandated tags, applied once at the app level so every resource in either stack
+# inherits them. Owner/CostCenter come from context (override with `-c`); Environment
+# reflects what is being deployed.
+ctx = app.node.try_get_context
+Tags.of(app).add("Owner", ctx("owner_tag") or "tech-summit")
+Tags.of(app).add("CostCenter", ctx("cost_center") or "tech-summit-demo")
+Tags.of(app).add("Environment", deployment_type or "pipeline")
 
 app.synth()

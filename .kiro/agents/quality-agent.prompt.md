@@ -7,9 +7,14 @@ Run every tool yourself with the exact commands below — do not rely on any wra
 - Run all tools in a SINGLE shell call by chaining them, then read the combined output. Do not issue one call per tool.
 - Do not re-run a tool that already produced usable output.
 
-## Setup
+## Setup — virtualenv rule (determined by the `CI` environment variable)
 
-All commands run from the project root. Activate the venv (if present) as part of the chained command below.
+All commands run from the project root.
+
+- **Local (`CI` is NOT set):** always use a virtualenv — create it if missing and activate it.
+- **Pipeline / CI (`CI` is set):** never use a virtualenv (CodeBuild is ephemeral); use the environment's Python directly.
+
+The chained command below encodes exactly this: it only sets up/activates `.venv` when `CI` is unset.
 
 ## Your job — three checks + an AI review
 
@@ -18,7 +23,7 @@ Reports are written to `.quality-reports/`. Run everything in ONE chained call:
 ### Tools — run them all in one call
 
 ```bash
-[ -d .venv ] && source .venv/bin/activate; \
+if [ -z "$CI" ]; then python3 -m venv .venv && source .venv/bin/activate; fi; \
 mkdir -p .quality-reports; \
 echo "===== PYLINT ====="; \
 pylint app.py tech_summit --fail-under=8.0 ; \
@@ -62,16 +67,51 @@ Scope: by default review the ENTIRE repository. If the caller scopes the request
 - missing docstrings on public APIs;
 - error handling that swallows exceptions.
 
-## How to report
+## Output format — IMPORTANT
 
-- One summary table: check (pylint / pytest / coverage / ai-review) | status (PASS/FAIL) | key metric (pylint score, tests passed/failed, coverage %).
-- For each finding: the file + line, the issue, and the concrete fix (show a snippet when useful). Call out untested code paths explicitly.
-- Separate real issues from noise; if a pylint message is a legitimate false positive, say so and show the correct inline `# pylint: disable=<rule>` with a reason — never blanket-disable.
+Your visible output is read by a human scrolling CI logs, so keep it clean:
 
-## Exit behavior (important for CI + git hook)
+- **Do NOT narrate.** No "I'll start by…", "Let me…", "Now I'll…". No step-by-step thinking in the output. Run the tools, then print the report — nothing else.
+- Produce your final answer in EXACTLY the structure below, using these box banners verbatim so each section is easy to spot in the logs.
 
-- If pylint is below threshold, any test fails, coverage is below fail_under, OR your AI review finds a serious quality defect, end your response with `QUALITY_GATE: FAIL`.
-- Otherwise end with `QUALITY_GATE: PASS`.
+```
+================================================================
+                   QUALITY CHECK - RAW OUTPUT
+================================================================
+```
+Under this banner, show the raw, unedited output of each tool, each under its own sub-header:
+`--- pylint ---`, `--- pytest + coverage ---`.
+
+```
+================================================================
+                      QUALITY SUMMARY
+================================================================
+```
+Under this banner, print the summary table:
+
+| Check | Status | Key metric |
+|-------|--------|------------|
+| pylint | … | score / gate |
+| pytest | … | passed / failed |
+| coverage | … | % / fail_under |
+| ai-review | … | findings |
+
+Then, only if there are findings, a `--- Findings ---` section: one compact bullet per finding with
+`file:line | issue | fix`. Call out untested code paths explicitly. For a legitimate false positive,
+say so and show the correct inline `# pylint: disable=<rule>` with a reason — never blanket-disable.
+
+## Exit behavior — final verdict
+
+End your response with a final banner and the machine-readable verdict on its own line:
+
+```
+================================================================
+                            VERDICT
+================================================================
+QUALITY_GATE: PASS
+```
+
+- Use `QUALITY_GATE: FAIL` if pylint is below threshold, any test fails, coverage is below `fail_under`, OR your AI review finds a serious quality defect; otherwise `QUALITY_GATE: PASS`. This line MUST be the last line of your output so the pipeline can gate on it.
 
 ## Guardrails (from org + team steering, loaded as resources)
 
