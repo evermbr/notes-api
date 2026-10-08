@@ -61,8 +61,8 @@ findings must be fixed first or suppressed with concrete evidence.
 
 ## Pipeline stack
 
-`PipelineStack` receives one `PipelineConfig` containing environment, `SourceConfig` and
-the Kiro secret ARN. It provisions:
+`PipelineStack` receives one `PipelineConfig` containing application, environment,
+`SourceConfig` and the Kiro secret ARN. It provisions:
 
 1. **Source** — GitHub via CodeConnections, with a full clone for history scanning.
 2. **CodeValidation** — quality and security CodeBuild actions in parallel.
@@ -72,7 +72,9 @@ the Kiro secret ARN. It provisions:
 
 Pipeline artifacts use a dedicated versioned S3 bucket encrypted by a rotating KMS key,
 with TLS enforcement, public access blocked and server access logs sent to a separate
-retained log bucket. Physical names are left to CDK.
+retained log bucket. Resources remain auto-named except the user-facing pipeline, whose
+stable name is derived as `<application>-<environment>` (for example,
+`tech-summit-demo-dev`).
 
 ### Fail-closed Kiro gates
 

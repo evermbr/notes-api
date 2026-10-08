@@ -43,7 +43,8 @@ non-production resources remain disposable for the demo.
 
 ### Pipeline stack
 
-The pipeline contains:
+The user-facing pipeline has the stable, context-derived name
+`<application>-<environment>` (default: `tech-summit-demo-dev`). It contains:
 
 1. **Source** — GitHub through CodeConnections, full clone for gitleaks history scanning.
 2. **CodeValidation** — quality and security CodeBuild actions running in parallel.

@@ -95,6 +95,7 @@ else:
         f"TechSummitPipeline{environment_suffix}Stack",
         env=aws_environment,
         config=PipelineConfig(
+            application_name=application_name,
             environment_name=environment_name,
             source=source,
             kiro_secret_arn=source_config["kiroSecretArn"],

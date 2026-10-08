@@ -23,7 +23,7 @@ to a name. When an external consumer genuinely requires a stable, explicit physi
 it follows:
 
 ```
-<app>-<env>-<resource>[-<qualifier>]
+<app>-<env>[-<resource>[-<qualifier>]]
 ```
 
 - `<app>` — the application/service short name, kebab-case (e.g. `task-api`).

@@ -18,6 +18,7 @@ def _template(environment_name: str = "dev") -> assertions.Template:
         app,
         "TechSummitPipelineTestStack",
         config=PipelineConfig(
+            application_name="tech-summit-demo",
             environment_name=environment_name,
             source=SourceConfig(
                 owner="example",
@@ -50,6 +51,10 @@ def test_pipeline_resources_are_created():
     template = _template()
     template.resource_count_is("AWS::CodePipeline::Pipeline", 1)
     template.resource_count_is("AWS::CodeBuild::Project", 3)
+    template.has_resource_properties(
+        "AWS::CodePipeline::Pipeline",
+        {"Name": "tech-summit-demo-dev"},
+    )
 
 
 def test_artifacts_are_encrypted_logged_and_retained():

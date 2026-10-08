@@ -54,6 +54,9 @@ class PipelineStack(Stack):
         pipeline = Pipeline(
             self,
             "TechSummitPipeline",
+            pipeline_name=(
+                f"{config.application_name}-{config.environment_name}"
+            ),
             artifact_bucket=artifact_bucket,
             stages=stages,
         )

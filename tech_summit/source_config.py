@@ -15,8 +15,9 @@ class SourceConfig:
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    """Group environment, source and Kiro secret settings for the pipeline stack."""
+    """Group application, environment, source and Kiro settings for the pipeline."""
 
+    application_name: str
     environment_name: str
     source: SourceConfig
     kiro_secret_arn: str
