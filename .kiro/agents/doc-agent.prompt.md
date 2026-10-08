@@ -12,7 +12,7 @@ You run after a file was saved. Decide whether that change makes the README stal
 Update the README ONLY if the change affects something the README describes or should describe, for example:
 
 - a new/removed AWS resource or construct in the stack (Lambda, DynamoDB, SNS/SQS, etc.);
-- a change to the URL shortener's behavior or its request/response contract;
+- a change to the Notes API behavior or its request/response contract;
 - new/removed/renamed environment variables, commands, or setup steps;
 - new/removed agents, hooks, steering files, or CI buildspecs;
 - a change to the project layout, dependencies, or how to run things.

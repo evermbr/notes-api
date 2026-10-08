@@ -1,146 +1,166 @@
 # tech-summit-demo
 
-A small AWS CDK (Python) project used as a Tech Summit demo for **Kiro-driven quality &
-security gating**. It ships a tiny real workload and a CI pipeline that runs Kiro CLI
-agents for the standard Python checks — locally (on save) and in CI/CD (headless in CodeBuild).
+A small AWS CDK (Python) project used as a Tech Summit demo for **Kiro-driven quality,
+security and deployment gating**. It combines a minimal Notes API with a CI/CD pipeline
+that runs governed Kiro CLI agents locally on save and headlessly in CodeBuild.
 
-## Stacks
+## Stacks and environments
 
-`app.py` selects which stack to synthesize/deploy via the `deployment_type` CDK context
-variable, passed with `-c`:
+`app.py` reads two independent CDK context values:
 
-- `cdk deploy -c deployment_type=app` → the **application stack** (`TechSummitStack`).
-- `cdk deploy` (deployment_type unset) → the **CI pipeline stack** (`PipelineStack`).
+- `deployment_type=app|pipeline` selects the workload or CI/CD stack (default: pipeline).
+- `environment=dev|staging|prod` selects the deployment stage (default: dev).
 
-Both stacks read the target account/region from the `ACCOUNT_ID` and `AWS_REGION`
-environment variables and fail fast if either is unset. Org tags (`Owner`, `CostCenter`,
-`Environment`) are applied app-wide so every resource inherits them.
+The resulting stack IDs are `TechSummit<Env>Stack` and
+`TechSummitPipeline<Env>Stack`. Both require `ACCOUNT_ID` and `AWS_REGION` environment
+variables and run cdk-nag `AwsSolutionsChecks` during synth.
 
-### Application stack (`TechSummitStack`)
+Six tags are applied once at app level and inherited by every taggable resource:
+`Owner`, `CostCenter`, `Environment`, `Application`, `ManagedBy` and
+`DataClassification`. Their defaults live in `cdk.json` and can be overridden with CDK
+context.
 
-A **URL shortener**: a Lambda (`UrlShortenerFunction`, Python 3.13) fronted by an **API
-Gateway REST API**, backed by a **DynamoDB** table (`UrlShortenerTable`, pay-per-request,
-AWS-managed encryption, PITR):
+### Application stack
 
-- `POST /` with `{"url": "https://..."}` → stores a 7-char code, returns `{code, url}`.
-- `GET /{code}` → `302` redirect to the original URL (`404` if unknown).
+A **Notes API** with one single-purpose Lambda per operation behind an API Gateway REST
+API (`proxy=False`) and a shared DynamoDB table:
 
-The API is protected by a **Lambda token authorizer** (`ApiAuthorizerFunction`) that
-validates the `Authorization` header against an **auto-generated Secrets Manager API key**
-(`ApiKeySecret`) — nothing is hard-coded. Requests without a valid key get `403`.
+- `POST /notes` with `{"title": "...", "content": "..."}` →
+  `NotesCreateFunction` stores a note and returns `201` with `{id, title, content}`.
+- `GET /notes/{id}` → `NotesGetFunction` returns the note or `404`.
 
-cdk-nag (`AwsSolutionsChecks`) runs on synth for this stack only. Findings that are out of
-scope for a demo (API Gateway logging/validation/WAF, Cognito, secret rotation, Lambda
-runtime, managed exec-role policy) are suppressed with justifications via `NagSuppressions`.
+The create Lambda has write-only table access; the get Lambda has read-only access. Every
+method uses a Lambda token authorizer backed by an auto-generated Secrets Manager key.
+The authorizer performs a constant-time comparison and returns a stage-wide policy so its
+five-minute cache works across routes.
 
-### Pipeline stack (`PipelineStack`)
+The API surface starts minimal on purpose: list, update and delete are live-demo extension
+points. Add each as a new Lambda + least-privilege grant + explicit API method.
 
-A classic CodePipeline (`aws_cdk.aws_codepipeline`) with three stages:
+DynamoDB uses on-demand billing, AWS-managed encryption and point-in-time recovery. In
+`prod`, deletion protection is enabled and both the table and API-key secret are retained;
+non-production resources remain disposable for the demo.
 
-- **Source** — pulls the code from GitHub via an AWS CodeConnections connection
-  (`code_build_clone_output=True`, so `.git` is present for gitleaks history scanning).
-- **CodeValidation** — two CodeBuild actions that run **in parallel**: `QualityCheck`
-  (`python-quality-agent`) and `SecurityCheck` (`python-security-agent`), headless.
-- **Deploy** — a CodeBuild action running the `deploy-agent`, which runs
-  `cdk deploy -c deployment_type=app`.
+### Pipeline stack
 
-Each gate is a reusable `KiroCliStep` L2 construct (`tech_summit/kiro_cli_step.py`) whose
-buildspec is defined **inline** — no external buildspec files. The Kiro CLI API key is read
-from Secrets Manager at build time (never inlined), and `CI=true` + `runtime-versions`
-(Node 22 / Python 3.12) are set for every step.
+The pipeline contains:
 
-Source and secret settings come from the `sourceConfig` object in `cdk.json` (context):
-`owner`, `repo`, `branch`, `connectionArn`, `kiroSecretArn`.
+1. **Source** — GitHub through CodeConnections, full clone for gitleaks history scanning.
+2. **CodeValidation** — quality and security CodeBuild actions running in parallel.
+3. **ApproveDeploy** — production only; a required human approval.
+4. **Deploy** — the constrained Kiro deploy agent targets the selected environment.
+
+Artifacts use a dedicated versioned S3 bucket encrypted by a rotating KMS key, with TLS
+required, public access blocked and server access logs written to a retained log bucket.
+cdk-nag also runs on this stack; justified IAM5 suppressions are scoped to the constructs
+whose L2-generated policies need suffix, object-path or CDK bootstrap-role wildcards.
+
+Each CodeBuild gate is a reusable `KiroCliStep` L2 construct with an inline buildspec. It
+installs pinned dependencies, checksum-verifies pinned Kiro CLI 2.28.0, shell-quotes tasks,
+uses `pipefail`, and requires an exact final verdict. Agent crashes, missing verdicts or
+scanner failures cannot silently pass. The deploy project pins AWS CDK CLI 2.1139.0.
+
+The Kiro API key comes from the `KIRO_API_KEY` field in the configured JSON secret. Source
+and secret settings live under `context.sourceConfig` in `cdk.json`.
 
 ## Kiro context engineering
 
-Everything under `.kiro/` makes the checks reproducible and governed:
-
 - **`.kiro/agents/`**
-  - `python-security-agent` — runs **bandit** (SAST), **pip-audit** (dependency CVEs) and
-    **gitleaks** (secrets in the tree + git history), plus a Kiro-native AI vulnerability
-    review. Ends with `SECURITY_GATE: PASS|FAIL`.
-  - `python-quality-agent` — runs **pylint**, **pytest** and **coverage** (branch, with
-    XML + JUnit reports), plus an AI code-quality review. Ends with `QUALITY_GATE: PASS|FAIL`.
-  - `deploy-agent` — runs `cdk synth` / `diff` / `deploy` (deploy uses
-    `--require-approval never`); may deploy but never destroys. Ends with `DEPLOY: SUCCESS|FAILED`.
-  - `doc-agent` — on a save, decides whether the change makes the docs stale and, only if
-    necessary, edits `README.md` (and nothing else).
-  - Each agent's instructions live in a paired `*.prompt.md` (referenced via `file://`).
-    Agents are scoped by `permissions.rules`: the check agents are read-only; the deploy
-    agent may `cdk deploy` but not `cdk destroy`; the doc-agent may write only `README.md`.
-  - **Virtualenv rule:** locally (`CI` unset) agents always use a `.venv`; in CI (`CI` set)
-    they never do (CodeBuild is ephemeral).
-- **`.kiro/hooks/`** — `PostFileSave` hooks that ask Kiro to run the matching agent against
-  the changed files on save:
-  - `quality-gate-on-save` → `python-quality-agent`
-  - `security-gate-on-save` → `python-security-agent`
-  - `doc-on-save` → `doc-agent`
-- **`.kiro/steering/`** — `org-standards` → `team-platform` → `project-tech-summit`,
-  layered as context (org is the floor; team/project may tighten). The team steering owns
-  the naming & tagging strategy.
+  - `python-quality-agent` — whole-repository pylint, pytest, branch coverage and an AI
+    quality review; ends with `QUALITY_GATE: PASS|FAIL`.
+  - `python-security-agent` — bandit, runtime/dev pip-audit, gitleaks and an AI security
+    review; ends with `SECURITY_GATE: PASS|FAIL`.
+  - `deploy-agent` — synth/diff/deploy only; never destroys resources; ends with
+    `DEPLOY: SUCCESS|FAILED`.
+  - `doc-agent` — updates only this README when documented behavior becomes stale.
+- **`.kiro/hooks/`** — PostFileSave hooks trigger documentation, quality and security
+  checks.
+- **`.kiro/skills/`** — repository-local `linting` and `testing` workflows.
+- **`.kiro/steering/`**
+  - always-on: `project-context.md`, `python-standards.md`;
+  - CDK fileMatch: `cdk-standards.md`, `naming-strategy.md`, `tagging-strategy.md`.
 
-Scanner/tool configs live at the repo root: `.bandit`, `.pylintrc` (pylint gate lives here),
-`.coveragerc` (coverage `fail_under = 80`).
-
-## CI/CD gate mechanics
-
-Each CodeBuild action runs its agent in **headless mode**
-(`kiro-cli chat --agent <name> --no-interactive --trust-all-tools`). The agent runs the
-tools itself and prints a verdict line; the buildspec greps it and fails the build when the
-agent reports `FAIL`, blocking the pipeline. Destructive commands stay blocked by each
-agent's `permissions.rules` even under `--trust-all-tools`.
+Locally, agents use `.venv` and install both requirements files. CodeBuild installs them
+directly into its ephemeral environment. Agent permissions remain constrained even when
+headless CI uses `--trust-all-tools`.
 
 ## Project layout
 
-```
-app.py                            # CDK app entry; selects stack via -c deployment_type; app-wide tags
-tech_summit/tech_summit_stack.py  # application stack (URL shortener + API GW + authorizer)
-tech_summit/pipeline_stack.py     # CI pipeline stack (Source → CodeValidation → Deploy)
-tech_summit/kiro_cli_step.py      # L2 construct: a CodeBuild step running a Kiro agent headless
-tech_summit/kiro_cli_step_props.py# config object for KiroCliStep
-tech_summit/source_config.py      # GitHub source config (owner/repo/branch/connection)
-lambda/url_shortener/handler.py   # URL shortener handler (API Gateway REST proxy event shape)
-lambda/authorizer/handler.py      # Lambda token authorizer
-tests/unit/                       # stack assertions + handler unit tests
-.kiro/                            # agents, hooks, steering
+```text
+app.py                              # context validation, tags, stack selection, cdk-nag
+tech_summit/tech_summit_stack.py    # Notes API application stack
+tech_summit/pipeline_stack.py       # source → validation → approval(prod) → deploy
+tech_summit/kiro_cli_step.py        # fail-closed Kiro CLI CodeBuild L2 construct
+tech_summit/kiro_cli_step_props.py  # gate configuration
+tech_summit/source_config.py        # SourceConfig and PipelineConfig
+lambda/notes_create/handler.py      # POST /notes (write-only table grant)
+lambda/notes_get/handler.py         # GET /notes/{id} (read-only table grant)
+lambda/authorizer/handler.py        # cached Lambda TOKEN authorizer
+tests/unit/                         # handler and CDK assertion tests
+.kiro/                              # agents, hooks, skills and steering
 ```
 
-## Getting started
+## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip3 install -r requirements.txt -r requirements-dev.txt
 ```
 
-## Common commands
+Runtime and development dependencies are pinned exactly.
+
+## Validate
 
 ```bash
-# Tests + coverage
-coverage erase && python3 -m coverage run --branch -m pytest -v && coverage report
+# Tests + configured line/branch coverage gate
+coverage erase
+python3 -m coverage run --branch -m pytest -v
+coverage report --show-missing
 
-# Lint (gate threshold comes from .pylintrc)
-pylint app.py tech_summit
+# Whole-repository lint (exclude generated/third-party trees)
+find . -name '*.py' ! -path './cdk.out/*' ! -path './.venv/*' | xargs pylint
 
-# Synthesize (env vars required). Default = pipeline stack; add -c deployment_type=app for the app stack
-ACCOUNT_ID=<account> AWS_REGION=<region> cdk synth
-ACCOUNT_ID=<account> AWS_REGION=<region> cdk synth -c deployment_type=app
+# Dependency audits
+pip-audit -r requirements.txt
+pip-audit -r requirements-dev.txt
 
-# Deploy the application stack
-ACCOUNT_ID=<account> AWS_REGION=<region> cdk deploy -c deployment_type=app
+# Application synth + cdk-nag
+ACCOUNT_ID=<account> AWS_REGION=<region> \
+  cdk synth -c deployment_type=app -c environment=dev
 
-# Deploy the CI pipeline (source + secret come from cdk.json -> context.sourceConfig)
-ACCOUNT_ID=<account> AWS_REGION=<region> cdk deploy
+# Pipeline synth + cdk-nag
+ACCOUNT_ID=<account> AWS_REGION=<region> \
+  cdk synth -c deployment_type=pipeline -c environment=dev
 ```
 
-## Calling the deployed API
+Read the generated `AwsSolutions--<Stack>-NagReport.csv`; every row must be `Compliant`
+or have a justified `Suppressed` status.
 
-The API requires the generated key in the `Authorization` header. Fetch it from Secrets
-Manager, then call the endpoint:
+## Deploy
+
+```bash
+# Application
+ACCOUNT_ID=<account> AWS_REGION=<region> \
+  cdk deploy -c deployment_type=app -c environment=dev
+
+# Pipeline
+ACCOUNT_ID=<account> AWS_REGION=<region> \
+  cdk deploy -c deployment_type=pipeline -c environment=dev
+```
+
+Production pipeline deployments include a manual approval stage.
+
+## Call the deployed API
 
 ```bash
 KEY=$(aws secretsmanager get-secret-value --secret-id <ApiKeySecret-arn> \
   --query SecretString --output text)
-curl -X POST "$API_URL/" -H "Authorization: $KEY" \
-  -d '{"url": "https://example.com"}'
+
+curl -X POST "$API_URL/notes" \
+  -H "Authorization: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Shopping", "content": "milk and eggs"}'
+
+curl "$API_URL/notes/<id>" -H "Authorization: $KEY"
 ```

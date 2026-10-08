@@ -1,33 +1,30 @@
 {
   "name": "python-quality-agent",
-  "description": "Kiro CLI quality agent for the organization. Runs all the standard quality checks for python applications",
+  "description": "Kiro CLI quality agent for the organization. Runs all standard quality checks for Python applications.",
   "prompt": "file://./quality-agent.prompt.md",
-  "tools": [
-    "read",
-    "shell"
-  ],
-  "allowedTools": [
-    "read"
-  ],
-  "resources": [
-    "file://.kiro/steering/**/*.md"
-  ],
+  "tools": ["read", "shell"],
+  "allowedTools": ["read"],
+  "resources": ["file://.kiro/steering/**/*.md"],
   "permissions": {
     "rules": [
       {
         "capability": "fs_read",
-        "match": [
-          "**"
-        ],
+        "match": ["**"],
         "effect": "allow"
       },
       {
         "capability": "shell",
         "match": [
           "[ -d .venv ]*",
+          "python3 -m venv*",
+          "pip3 install*",
+          "mkdir *",
+          "find *",
+          "xargs *",
           "pylint *",
           "pytest*",
           "python3 -m pytest*",
+          "python3 -m coverage*",
           "coverage *",
           "git diff*",
           "git log*",

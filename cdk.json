@@ -15,6 +15,11 @@
     ]
   },
   "context": {
+    "environment": "dev",
+    "application": "tech-summit-demo",
+    "owner_tag": "team-platform",
+    "cost_center": "tech-summit-demo",
+    "data_classification": "internal",
     "sourceConfig": {
       "owner": "francoabregu",
       "repo": "tech-summit-demo",

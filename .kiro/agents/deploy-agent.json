@@ -1,29 +1,48 @@
 {
   "name": "deploy-agent",
-  "description": "Kiro CLI deploy agent for the tech_summit CDK app. Runs cdk synth, cdk diff and cdk deploy for the application stack (deployment_type=app). Never touches the pipeline stack and never destroys resources.",
+  "description": "Kiro CLI deploy agent for the tech_summit CDK application stack. Never destroys resources.",
   "prompt": "file://./deploy-agent.prompt.md",
   "tools": ["read", "shell"],
   "allowedTools": ["read"],
-  "resources": [
-    "file://.kiro/steering/**/*.md"
-  ],
+  "resources": ["file://.kiro/steering/**/*.md"],
   "permissions": {
     "rules": [
-      { "capability": "fs_read", "match": ["**"], "effect": "allow" },
-      { "capability": "shell", "match": [
+      {
+        "capability": "fs_read",
+        "match": ["**"],
+        "effect": "allow"
+      },
+      {
+        "capability": "shell",
+        "match": [
           "cdk synth*",
           "cdk diff*",
           "cdk deploy*",
           "cdk ls*",
+          "python3 -m venv*",
+          "pip3 install*",
           "[ -d .venv ]*",
-          "source .venv/bin/activate*", ". .venv/bin/activate*",
-          "cat *", "ls *", "grep *", "echo *"
-        ], "effect": "allow" },
-      { "capability": "shell", "match": [
+          "source .venv/bin/activate*",
+          ". .venv/bin/activate*",
+          "cat *",
+          "ls *",
+          "grep *",
+          "echo *"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "shell",
+        "match": [
           "cdk destroy*",
-          "aws *delete*", "aws *terminate*",
-          "rm -rf *", "sudo *", "git push*"
-        ], "effect": "deny" }
+          "aws *delete*",
+          "aws *terminate*",
+          "rm -rf *",
+          "sudo *",
+          "git push*"
+        ],
+        "effect": "deny"
+      }
     ]
   }
 }

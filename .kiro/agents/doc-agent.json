@@ -1,39 +1,25 @@
 {
   "name": "doc-agent",
-  "description": "Kiro agent that keeps README.md up to date. On a file save it decides whether the change makes the docs stale and, only if necessary, edits README.md — nothing else.",
+  "description": "Kiro agent that updates README.md only when documented behavior becomes stale.",
   "prompt": "file://./doc-agent.prompt.md",
-  "tools": [
-    "read",
-    "shell",
-    "write"
-  ],
-  "allowedTools": [
-    "read"
-  ],
-  "resources": [
-    "file://.kiro/steering/**/*.md"
-  ],
+  "tools": ["read", "shell", "write"],
+  "allowedTools": ["read"],
+  "resources": ["file://.kiro/steering/**/*.md"],
   "permissions": {
     "rules": [
       {
         "capability": "fs_read",
-        "match": [
-          "**"
-        ],
+        "match": ["**"],
         "effect": "allow"
       },
       {
         "capability": "fs_write",
-        "match": [
-          "README.md"
-        ],
+        "match": ["README.md"],
         "effect": "allow"
       },
       {
         "capability": "fs_write",
-        "match": [
-          "**"
-        ],
+        "match": ["**"],
         "effect": "deny"
       },
       {

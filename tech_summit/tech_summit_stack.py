@@ -1,64 +1,89 @@
-"""CDK stack for the tech_summit workload.
+"""CDK stack for the tech_summit Notes API workload.
 
-A small URL shortener: a Lambda fronted by an API Gateway REST API (protected by a
-Lambda token authorizer that checks an auto-generated Secrets Manager API key), backed
-by a DynamoDB table.
+The API uses one single-purpose Lambda per operation behind API Gateway, a shared
+DynamoDB table, and a Lambda token authorizer backed by Secrets Manager.
 """
 
 from constructs import Construct
-from aws_cdk import Duration, Stack, RemovalPolicy
+from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk.aws_apigateway import (
+    AuthorizationType,
+    LambdaIntegration,
+    LambdaRestApi,
+    MethodOptions,
+    StageOptions,
+    TokenAuthorizer,
+)
 from aws_cdk.aws_dynamodb import (
-    Table,
     Attribute,
     AttributeType,
     BillingMode,
-    TableEncryption,
     PointInTimeRecoverySpecification,
+    Table,
+    TableEncryption,
 )
-from aws_cdk.aws_lambda import Function, Runtime, Code
-from aws_cdk.aws_apigateway import (
-    LambdaRestApi,
-    TokenAuthorizer,
-    MethodOptions,
-    AuthorizationType,
-)
+from aws_cdk.aws_lambda import Code, Function, Runtime
 from aws_cdk.aws_secretsmanager import Secret, SecretStringGenerator
 from cdk_nag import NagSuppressions
 
 
 class TechSummitStack(Stack):
-    """Provisions a DynamoDB-backed URL shortener Lambda fronted by API Gateway."""
+    """Provision the authenticated, DynamoDB-backed Notes API."""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        environment_name: str,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        data_removal_policy = (
+            RemovalPolicy.RETAIN
+            if environment_name == "prod"
+            else RemovalPolicy.DESTROY
+        )
 
         table = Table(
             self,
-            "UrlShortenerTable",
-            partition_key=Attribute(name="code", type=AttributeType.STRING),
+            "NotesTable",
+            partition_key=Attribute(name="id", type=AttributeType.STRING),
             billing_mode=BillingMode.PAY_PER_REQUEST,
             encryption=TableEncryption.AWS_MANAGED,
             point_in_time_recovery_specification=PointInTimeRecoverySpecification(
                 point_in_time_recovery_enabled=True,
             ),
-            removal_policy=RemovalPolicy.DESTROY,
+            deletion_protection=environment_name == "prod",
+            removal_policy=data_removal_policy,
         )
 
-        shortener = Function(
+        # One single-purpose Lambda per operation; each gets only the table access
+        # required for that operation.
+        create_fn = Function(
             self,
-            "UrlShortenerFunction",
+            "NotesCreateFunction",
             runtime=Runtime.PYTHON_3_13,
             handler="handler.handler",
-            code=Code.from_asset("lambda/url_shortener"),
+            code=Code.from_asset("lambda/notes_create"),
             timeout=Duration.seconds(10),
             environment={"TABLE_NAME": table.table_name},
         )
+        table.grant_write_data(create_fn)
 
-        # Least privilege: the function only needs read/write on this table.
-        table.grant_read_write_data(shortener)
+        get_fn = Function(
+            self,
+            "NotesGetFunction",
+            runtime=Runtime.PYTHON_3_13,
+            handler="handler.handler",
+            code=Code.from_asset("lambda/notes_get"),
+            timeout=Duration.seconds(10),
+            environment={"TABLE_NAME": table.table_name},
+        )
+        table.grant_read_data(get_fn)
 
-        # --- API key + Lambda authorizer -------------------------------------
-        # Secrets Manager auto-generates the API key; nothing is hard-coded.
+        # Secrets Manager generates the API key; no credential is stored in source.
         api_key_secret = Secret(
             self,
             "ApiKeySecret",
@@ -66,7 +91,7 @@ class TechSummitStack(Stack):
                 password_length=40,
                 exclude_punctuation=True,
             ),
-            removal_policy=RemovalPolicy.DESTROY,
+            removal_policy=data_removal_policy,
         )
 
         authorizer_fn = Function(
@@ -84,37 +109,41 @@ class TechSummitStack(Stack):
             self,
             "ApiTokenAuthorizer",
             handler=authorizer_fn,
-            # Cache authorizer results per token to avoid invoking the Lambda every call.
             results_cache_ttl=Duration.minutes(5),
         )
 
-        # API Gateway REST API fronting the Lambda. Every method/path is proxied to the
-        # handler and protected by the token authorizer.
+        # proxy=False keeps routing explicit: every operation maps to its own Lambda.
+        # LambdaRestApi still requires a default handler, but it creates no catch-all
+        # method in this mode; create_fn is therefore only a construction-time default.
         api = LambdaRestApi(
             self,
-            "UrlShortenerApi",
-            handler=shortener,
-            proxy=True,
+            "NotesApi",
+            handler=create_fn,
+            proxy=False,
+            deploy_options=StageOptions(stage_name=environment_name),
             default_method_options=MethodOptions(
                 authorizer=authorizer,
                 authorization_type=AuthorizationType.CUSTOM,
             ),
         )
 
-        # cdk-nag suppressions ------------------------------------------------
-        # AwsSolutions-IAM4: both Lambda service roles use the AWS-managed
-        # AWSLambdaBasicExecutionRole. That policy only grants CloudWatch Logs
-        # write access (the standard CDK Lambda default); replacing it with a
-        # customer-managed policy would just duplicate those same permissions.
+        notes = api.root.add_resource("notes")
+        notes.add_method("POST", LambdaIntegration(create_fn))
+
+        note = notes.add_resource("{id}")
+        note.add_method("GET", LambdaIntegration(get_fn))
+
+        # The three Lambda service roles use the standard CDK-managed basic execution
+        # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
+        # demo rather than tracking a newly released runtime automatically.
         NagSuppressions.add_resource_suppressions(
-            [shortener, authorizer_fn],
+            [create_fn, get_fn, authorizer_fn],
             [
                 {
                     "id": "AwsSolutions-IAM4",
                     "reason": (
-                        "Lambda execution role uses the AWS-managed "
-                        "AWSLambdaBasicExecutionRole for CloudWatch Logs access only; "
-                        "a customer-managed policy would merely replicate it."
+                        "Lambda execution role uses AWSLambdaBasicExecutionRole only "
+                        "for standard CloudWatch Logs write access."
                     ),
                     "appliesTo": [
                         "Policy::arn:<AWS::Partition>:iam::aws:policy/"
@@ -124,58 +153,53 @@ class TechSummitStack(Stack):
                 {
                     "id": "AwsSolutions-L1",
                     "reason": (
-                        "Pinned to Python 3.13, a supported and stable Lambda runtime. "
-                        "We intentionally stay one minor behind the newest (3.14) rather "
-                        "than track the bleeding edge on every CDK release."
+                        "Python 3.13 is the supported runtime selected for this demo; "
+                        "runtime upgrades are tested and performed deliberately."
                     ),
                 },
             ],
             apply_to_children=True,
         )
 
-        # AwsSolutions-SMG4: the API key secret has no automatic rotation. Rotation
-        # needs a rotation Lambda + a consumer that tolerates key changes; out of scope
-        # for this demo, where the key is static and read by the authorizer.
         NagSuppressions.add_resource_suppressions(
             api_key_secret,
             [
                 {
                     "id": "AwsSolutions-SMG4",
                     "reason": (
-                        "Static API key for a demo; automatic rotation is out of scope "
-                        "(no rotation Lambda / rotation-aware consumer)."
+                        "This demo uses a generated API key without a rotation-aware "
+                        "consumer; automatic rotation is outside its scope."
                     ),
                 },
             ],
         )
 
-        # API Gateway findings — out of scope for this demo. The API already sits behind
-        # a Lambda token authorizer; access/method logging, request validation, WAF and a
-        # Cognito user pool are production hardening we intentionally skip here.
+        # The API is intentionally small and guarded by a custom token authorizer. The
+        # suppressed controls are documented demo trade-offs rather than silent skips.
         NagSuppressions.add_resource_suppressions(
             api,
             [
                 {
                     "id": "AwsSolutions-APIG1",
-                    "reason": "Access logging out of scope for the demo.",
+                    "reason": "Access logging is outside the scope of this short demo.",
                 },
                 {
                     "id": "AwsSolutions-APIG2",
-                    "reason": "Request validation out of scope; the Lambda validates input.",
+                    "reason": "Each single-purpose Lambda validates its request input.",
                 },
                 {
                     "id": "AwsSolutions-APIG6",
-                    "reason": "Per-method CloudWatch logging out of scope for the demo.",
+                    "reason": "Per-method logging is outside the scope of this demo.",
                 },
                 {
                     "id": "AwsSolutions-APIG3",
-                    "reason": "WAFv2 web ACL out of scope for the demo.",
+                    "reason": "A WAF web ACL is outside the scope of this demo.",
                 },
                 {
                     "id": "AwsSolutions-COG4",
                     "reason": (
-                        "The API is guarded by a Lambda token authorizer by design; a "
-                        "Cognito user pool is not used for this demo."
+                        "Every method uses the intended Lambda token authorizer instead "
+                        "of a Cognito user-pool authorizer."
                     ),
                 },
             ],

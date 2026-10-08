@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """CDK application entry point.
 
-Which stack is synthesized/deployed depends on the ``deployment_type`` CDK context
-variable, passed with ``-c``:
-
-  * ``cdk deploy -c deployment_type=app``  -> the application stack (:class:`TechSummitStack`)
-  * ``cdk deploy``  (deployment_type unset) -> the CI pipeline stack (:class:`PipelineStack`)
-
-Both stacks read the target account/region from the ``ACCOUNT_ID`` and ``AWS_REGION``
-environment variables. The cdk-nag ``AwsSolutionsChecks`` aspect is applied only to the
-application stack, not to the CI pipeline stack.
+``deployment_type`` selects the application or pipeline stack; ``environment`` selects
+its deployment stage (``dev``, ``staging`` or ``prod``). Both stacks require the target
+AWS account and Region through ``ACCOUNT_ID`` and ``AWS_REGION``. The cdk-nag
+``AwsSolutionsChecks`` aspect is applied to every stack.
 """
 
 import os
@@ -17,16 +12,17 @@ import os
 from aws_cdk import App, Aspects, Environment, Tags
 from cdk_nag import AwsSolutionsChecks
 
-from tech_summit.tech_summit_stack import TechSummitStack
 from tech_summit.pipeline_stack import PipelineStack
-from tech_summit.source_config import SourceConfig
+from tech_summit.source_config import PipelineConfig, SourceConfig
+from tech_summit.tech_summit_stack import TechSummitStack
+
+_ALLOWED_DEPLOYMENT_TYPES = {"app", "pipeline"}
+_ALLOWED_ENVIRONMENTS = {"dev", "staging", "prod"}
+_ALLOWED_DATA_CLASSIFICATIONS = {"public", "internal", "confidential", "restricted"}
 
 
 def _require_env(name: str) -> str:
-    """Return the value of a required environment variable.
-
-    Raises a clear error asking the user to set it if it is missing or empty.
-    """
+    """Return a required environment variable or terminate with an actionable error."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(
@@ -36,44 +32,74 @@ def _require_env(name: str) -> str:
     return value
 
 
-app = App()
+def _require_choice(name: str, value: str, allowed: set[str]) -> str:
+    """Validate a context value against its allowed set and return it."""
+    if value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise SystemExit(f"CDK context {name} must be one of: {choices}")
+    return value
 
-env = Environment(
+
+app = App()
+ctx = app.node.try_get_context
+
+deployment_type = _require_choice(
+    "deployment_type",
+    ctx("deployment_type") or "pipeline",
+    _ALLOWED_DEPLOYMENT_TYPES,
+)
+environment_name = _require_choice(
+    "environment",
+    ctx("environment") or "dev",
+    _ALLOWED_ENVIRONMENTS,
+)
+data_classification = _require_choice(
+    "data_classification",
+    ctx("data_classification") or "internal",
+    _ALLOWED_DATA_CLASSIFICATIONS,
+)
+application_name = ctx("application") or "tech-summit-demo"
+
+aws_environment = Environment(
     account=_require_env("ACCOUNT_ID"),
     region=_require_env("AWS_REGION"),
 )
 
-# `-c deployment_type=app` deploys the application stack; anything else (including
-# the default of it being unset) deploys the CI pipeline stack.
-deployment_type = app.node.try_get_context("deployment_type")
+# Mandatory tags are applied once at app level and inherited by every taggable resource.
+tags = Tags.of(app)
+tags.add("Owner", ctx("owner_tag") or "team-platform")
+tags.add("CostCenter", ctx("cost_center") or "tech-summit-demo")
+tags.add("Environment", environment_name)
+tags.add("Application", application_name)
+tags.add("ManagedBy", "cdk")
+tags.add("DataClassification", data_classification)
 
+environment_suffix = environment_name.capitalize()
 if deployment_type == "app":
-    app_stack = TechSummitStack(app, "TechSummitStack", env=env)
-    # cdk-nag runs only on the application stack, not on the CI pipeline (whose
-    # CodePipeline/CodeBuild L2 constructs generate expected wildcard policies).
-    Aspects.of(app_stack).add(AwsSolutionsChecks(verbose=True))
-else:
-    cfg = app.node.try_get_context("sourceConfig") or {}
-    source = SourceConfig(
-        owner=cfg["owner"],
-        repo=cfg["repo"],
-        branch=cfg["branch"],
-        connection_arn=cfg["connectionArn"],
-    )
-    PipelineStack(
+    stack = TechSummitStack(
         app,
-        "TechSummitPipelineStack",
-        env=env,
-        source=source,
-        kiro_secret_arn=cfg["kiroSecretArn"],
+        f"TechSummit{environment_suffix}Stack",
+        env=aws_environment,
+        environment_name=environment_name,
+    )
+else:
+    source_config = ctx("sourceConfig") or {}
+    source = SourceConfig(
+        owner=source_config["owner"],
+        repo=source_config["repo"],
+        branch=source_config["branch"],
+        connection_arn=source_config["connectionArn"],
+    )
+    stack = PipelineStack(
+        app,
+        f"TechSummitPipeline{environment_suffix}Stack",
+        env=aws_environment,
+        config=PipelineConfig(
+            environment_name=environment_name,
+            source=source,
+            kiro_secret_arn=source_config["kiroSecretArn"],
+        ),
     )
 
-# Org-mandated tags, applied once at the app level so every resource in either stack
-# inherits them. Owner/CostCenter come from context (override with `-c`); Environment
-# reflects what is being deployed.
-ctx = app.node.try_get_context
-Tags.of(app).add("Owner", ctx("owner_tag") or "tech-summit")
-Tags.of(app).add("CostCenter", ctx("cost_center") or "tech-summit-demo")
-Tags.of(app).add("Environment", deployment_type or "pipeline")
-
+Aspects.of(stack).add(AwsSolutionsChecks(verbose=True))
 app.synth()

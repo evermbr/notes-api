@@ -10,10 +10,7 @@ omit =
     .security-reports/*
     .quality-reports/*
     app.py
-    tech_summit/pipeline_stack.py
-    tech_summit/kiro_cli_step.py
-    tech_summit/kiro_cli_step_props.py
-    tech_summit/source_config.py
+    **/__init__.py
 
 [report]
 include_namespace_packages = True

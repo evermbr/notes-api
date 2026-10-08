@@ -1,70 +1,83 @@
-"""Unit tests for the API Gateway Lambda token authorizer.
-
-The authorizer module is loaded from its file path (its filename ``handler.py`` collides
-with the url_shortener handler, so it is imported under a distinct module name here).
-Secrets Manager access is stubbed; no AWS calls are made.
-"""
-
-import importlib.util
-import os
+"""Unit tests for the API Gateway Lambda token authorizer."""
 
 import pytest
 
-_AUTHORIZER_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "lambda", "authorizer", "handler.py"
-)
+from tests.unit.lambda_test_utils import load_lambda_handler
 
 
 @pytest.fixture(name="authorizer")
 def _authorizer(monkeypatch):
-    """Load the authorizer module fresh with a stubbed Secrets Manager client."""
-    monkeypatch.setenv("API_KEY_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:1:secret:k")
-    spec = importlib.util.spec_from_file_location("authorizer_handler", _AUTHORIZER_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    """Load the authorizer with a Secrets Manager test double."""
+    monkeypatch.setenv(
+        "API_KEY_SECRET_ARN",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:test",
+    )
+    module = load_lambda_handler("authorizer", "authorizer_handler")
 
-    class FakeSecrets:
-        def get_secret_value(self, SecretId):  # noqa: N803 (boto3 kwarg name)
+    class FakeSecrets:  # pylint: disable=too-few-public-methods  # SDK test double
+        """Return a fixed secret value."""
+
+        def get_secret_value(self, **kwargs):
+            """Return the configured secret and verify the requested identifier."""
+            assert kwargs["SecretId"].endswith(":secret:test")
             return {"SecretString": "the-secret-key"}
 
-    module._secretsmanager = FakeSecrets()
-    module._cached_key = None
+    setattr(module, "_secretsmanager", FakeSecrets())
+    setattr(module, "_cached_key", None)
     return module
 
 
 def _event(token):
     return {
         "authorizationToken": token,
-        "methodArn": "arn:aws:execute-api:us-east-1:1:api/prod/GET/abc",
+        "methodArn": (
+            "arn:aws:execute-api:us-east-1:123456789012:api/dev/GET/notes/abc"
+        ),
     }
 
 
 def test_allows_matching_key(authorizer):
-    resp = authorizer.handler(_event("the-secret-key"))
-    stmt = resp["policyDocument"]["Statement"][0]
-    assert stmt["Effect"] == "Allow"
+    """A matching token is allowed for every method in the API stage."""
+    response = authorizer.handler(_event("the-secret-key"))
+    statement = response["policyDocument"]["Statement"][0]
+    assert statement["Effect"] == "Allow"
+    assert statement["Resource"].endswith("api/dev/*/*")
+    assert response["principalId"] == "notes-api-client"
 
 
 def test_denies_wrong_key(authorizer):
-    resp = authorizer.handler(_event("wrong-key"))
-    stmt = resp["policyDocument"]["Statement"][0]
-    assert stmt["Effect"] == "Deny"
+    """An incorrect token is denied."""
+    response = authorizer.handler(_event("wrong-key"))
+    statement = response["policyDocument"]["Statement"][0]
+    assert statement["Effect"] == "Deny"
 
 
 def test_denies_missing_token(authorizer):
-    resp = authorizer.handler(_event(""))
-    stmt = resp["policyDocument"]["Statement"][0]
-    assert stmt["Effect"] == "Deny"
+    """A missing token is denied without fetching the secret."""
+    response = authorizer.handler(_event(""))
+    statement = response["policyDocument"]["Statement"][0]
+    assert statement["Effect"] == "Deny"
+
+
+def test_malformed_method_arn_is_preserved(authorizer):
+    """An unexpected method ARN shape is preserved rather than guessed."""
+    response = authorizer.handler(
+        {"authorizationToken": "the-secret-key", "methodArn": "*"}
+    )
+    assert response["policyDocument"]["Statement"][0]["Resource"] == "*"
 
 
 def test_secret_value_is_cached(authorizer):
-    # Second call must not re-fetch: swap the client to one that raises if called.
+    """A warm invocation reuses the cached secret value."""
     authorizer.handler(_event("the-secret-key"))
 
-    class Boom:
-        def get_secret_value(self, SecretId):  # noqa: N803
+    class FailingSecrets:  # pylint: disable=too-few-public-methods  # SDK test double
+        """Fail if the authorizer attempts a second Secrets Manager call."""
+
+        def get_secret_value(self, **_kwargs):
+            """Raise because the cached value should make this unreachable."""
             raise AssertionError("secret should be cached, not re-fetched")
 
-    authorizer._secretsmanager = Boom()
-    resp = authorizer.handler(_event("the-secret-key"))
-    assert resp["policyDocument"]["Statement"][0]["Effect"] == "Allow"
+    setattr(authorizer, "_secretsmanager", FailingSecrets())
+    response = authorizer.handler(_event("the-secret-key"))
+    assert response["policyDocument"]["Statement"][0]["Effect"] == "Allow"

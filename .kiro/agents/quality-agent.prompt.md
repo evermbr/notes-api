@@ -23,10 +23,10 @@ Reports are written to `.quality-reports/`. Run everything in ONE chained call:
 ### Tools — run them all in one call
 
 ```bash
-if [ -z "$CI" ]; then python3 -m venv .venv && source .venv/bin/activate; fi; \
+if [ -z "$CI" ]; then [ -d .venv ] || python3 -m venv .venv; source .venv/bin/activate && pip3 install -r requirements.txt -r requirements-dev.txt; fi; \
 mkdir -p .quality-reports; \
 echo "===== PYLINT ====="; \
-pylint app.py tech_summit --fail-under=8.0 ; \
+find . -name '*.py' ! -path './cdk.out/*' ! -path './.venv/*' | xargs pylint ; \
 echo "===== PYTEST + COVERAGE ====="; \
 coverage erase && python3 -m coverage run --branch -m pytest -v && coverage report ; \
 echo "===== COVERAGE XML ====="; \
@@ -92,7 +92,7 @@ check name to 10 chars and the status to 6 so the columns line up in a plain-tex
 Keep the metric SHORT (value + gate only, no prose):
 
 ```
-pylint     PASS   10.00/10 (gate 8.0)
+pylint     PASS   10.00/10 (gate 10.0)
 pytest     PASS   18 passed / 0 failed
 coverage   PASS   100.0% (gate 80)
 ai-review  PASS   0 defects

@@ -22,18 +22,20 @@ The chained command below encodes exactly this: it only sets up/activates `.venv
 ### Scanners — run them all in one call
 
 gitleaks runs ONCE, depending on where the agent is running:
-- **Local (pre-push):** scan staged changes with `gitleaks protect --staged`.
-- **CI/CD:** scan the full git history with `gitleaks detect`.
-The `CI` environment variable is set by the pipeline, so branch on it. Always use `--redact`.
+- **Local / save hook:** scan the complete working tree with `gitleaks dir .` so
+  unstaged and newly created files are included.
+- **CI/CD:** scan the full git history with `gitleaks git .`.
+The `CI` environment variable is set by the pipeline, so branch on it. Always use
+`--redact`.
 
 ```bash
-if [ -z "$CI" ]; then python3 -m venv .venv && source .venv/bin/activate; fi; \
+if [ -z "$CI" ]; then [ -d .venv ] || python3 -m venv .venv; source .venv/bin/activate && pip3 install -r requirements.txt -r requirements-dev.txt; fi; \
 echo "===== BANDIT ====="; bandit -r . ; \
 echo "===== PIP-AUDIT (runtime) ====="; pip-audit -r requirements.txt ; \
 echo "===== PIP-AUDIT (dev) ====="; pip-audit -r requirements-dev.txt ; \
 echo "===== GITLEAKS ====="; \
-if [ -n "$CI" ]; then gitleaks detect --source . --redact; \
-else gitleaks protect --staged --source . --redact; fi
+if [ -n "$CI" ]; then gitleaks git . --redact; \
+else gitleaks dir . --redact; fi
 ```
 
 Interpret the combined output:

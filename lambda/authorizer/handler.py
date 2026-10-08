@@ -1,10 +1,11 @@
-"""Lambda TOKEN authorizer for the URL shortener API.
+"""Lambda TOKEN authorizer for the Notes API.
 
-Validates the caller-supplied API key (sent in the ``Authorization`` header) against the
-value stored in Secrets Manager. The secret value is fetched once and cached for the
-lifetime of the execution environment.
+The caller sends an API key in ``Authorization``. The function compares it with the
+Secrets Manager value and returns a stage-wide policy so API Gateway can safely cache
+the result for the same token across multiple Notes API routes.
 """
 
+import hmac
 import os
 
 import boto3
@@ -15,18 +16,26 @@ _cached_key: str | None = None
 
 
 def _expected_key() -> str:
-    """Return the expected API key, fetching it from Secrets Manager once and caching it."""
+    """Fetch the expected API key once per execution environment and cache it."""
     global _cached_key  # pylint: disable=global-statement
     if _cached_key is None:
-        resp = _secretsmanager.get_secret_value(SecretId=_SECRET_ARN)
-        _cached_key = resp["SecretString"]
+        response = _secretsmanager.get_secret_value(SecretId=_SECRET_ARN)
+        _cached_key = response["SecretString"]
     return _cached_key
 
 
+def _stage_resource(method_arn: str) -> str:
+    """Expand a method ARN to every method and resource in the same API stage."""
+    parts = method_arn.split("/", maxsplit=2)
+    if len(parts) < 2:
+        return method_arn
+    return f"{parts[0]}/{parts[1]}/*/*"
+
+
 def _policy(effect: str, resource: str) -> dict:
-    """Build an IAM policy document allowing or denying access to the method ARN."""
+    """Build an IAM policy allowing or denying API invocation for a stage."""
     return {
-        "principalId": "url-shortener-client",
+        "principalId": "notes-api-client",
         "policyDocument": {
             "Version": "2012-10-17",
             "Statement": [
@@ -41,8 +50,8 @@ def _policy(effect: str, resource: str) -> dict:
 
 
 def handler(event: dict, _context=None) -> dict:
-    """Allow the request when the token matches the stored API key, otherwise deny."""
+    """Allow a matching API key and deny missing or invalid credentials."""
     token = event.get("authorizationToken", "")
     method_arn = event.get("methodArn", "*")
-    effect = "Allow" if token and token == _expected_key() else "Deny"
-    return _policy(effect, method_arn)
+    is_valid = bool(token) and hmac.compare_digest(token, _expected_key())
+    return _policy("Allow" if is_valid else "Deny", _stage_resource(method_arn))
