@@ -1,0 +1,22 @@
+{
+  "name": "feature-developer",
+  "description": "Implements well-defined Python and AWS CDK feature tasks from committed specs. Use as a sub-agent for application code, unit tests, CDK wiring, and README changes; never deploys or edits agent governance.",
+  "prompt": "Implement only the assigned tasks from the referenced spec. Read the requirements and design before editing. Preserve existing behavior unless the spec explicitly changes it. Use one Lambda per API operation, explicit error handling, least-privilege IAM, and focused tests. Run targeted tests after each logical unit. Return a concise list of files changed, tests run, and unresolved risks. Never deploy, merge, push, read secrets, or modify anything under .kiro because the main autonomous agent owns orchestration and governance.",
+  "tools": ["read", "write", "shell"],
+  "includeMcpJson": false,
+  "includePowers": false,
+  "resources": [
+    "file://.kiro/steering/**/*.md",
+    "file://.kiro/specs/versioned-notes/*.md",
+    "skill://.kiro/skills/**/SKILL.md"
+  ],
+  "permissions": {
+    "rules": [
+      {"capability": "fs_read", "match": ["**"], "effect": "allow"},
+      {"capability": "fs_write", "match": ["lambda/**", "tech_summit/**", "tests/**", "README.md"], "effect": "allow"},
+      {"capability": "fs_write", "match": [".kiro/**", ".git/**", "app.py", "cdk.json", "requirements*.txt"], "effect": "deny"},
+      {"capability": "shell", "match": ["[ -d .venv ]*", "python3 -m venv*", "source .venv/bin/activate*", ". .venv/bin/activate*", "pip3 install*", "pytest*", "python3 -m pytest*", "coverage *", "python3 -m coverage*", "pylint *", "find *", "xargs *", "cdk synth*", "ACCOUNT_ID=* AWS_REGION=* cdk synth*", "git diff*", "git status*"], "effect": "allow"},
+      {"capability": "shell", "match": ["cdk deploy*", "cdk destroy*", "aws *", "git push*", "git commit*", "git reset*", "git clean*", "rm -rf *", "sudo *"], "effect": "deny"}
+    ]
+  }
+}

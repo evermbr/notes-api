@@ -21,6 +21,7 @@ from tech_summit.source_config import PipelineConfig, SourceConfig
 
 _CDK_CLI_VERSION = "2.1139.0"
 _GITLEAKS_VERSION = "8.30.1"
+_GITLEAKS_SHA256 = "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 
 class PipelineStack(Stack):
@@ -113,7 +114,11 @@ class PipelineStack(Stack):
                 extra_install=[
                     'curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/'
                     f'v{_GITLEAKS_VERSION}/gitleaks_{_GITLEAKS_VERSION}_linux_x64.tar.gz" '
-                    "| tar -xz -C /usr/local/bin gitleaks"
+                    "-o /tmp/gitleaks.tar.gz",
+                    f'echo "{_GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" '
+                    "| sha256sum -c -",
+                    "tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks",
+                    "rm -f /tmp/gitleaks.tar.gz",
                 ],
             ),
         )
@@ -133,12 +138,33 @@ class PipelineStack(Stack):
                 kiro_secret=kiro_secret,
                 build_image=LinuxBuildImage.STANDARD_7_0,
                 extra_install=[f"npm install -g aws-cdk@{_CDK_CLI_VERSION}"],
+                extra_env={
+                    "ACCOUNT_ID": self.account,
+                    "AWS_REGION": self.region,
+                },
             ),
         )
         deploy_step.role.add_to_principal_policy(
             iam.PolicyStatement(
                 actions=["sts:AssumeRole"],
-                resources=[f"arn:aws:iam::{self.account}:role/cdk-*"],
+                resources=[
+                    (
+                        f"arn:aws:iam::{self.account}:role/cdk-*-deploy-role-"
+                        f"{self.account}-{self.region}"
+                    ),
+                    (
+                        f"arn:aws:iam::{self.account}:role/cdk-*-file-publishing-role-"
+                        f"{self.account}-{self.region}"
+                    ),
+                    (
+                        f"arn:aws:iam::{self.account}:role/cdk-*-image-publishing-role-"
+                        f"{self.account}-{self.region}"
+                    ),
+                    (
+                        f"arn:aws:iam::{self.account}:role/cdk-*-lookup-role-"
+                        f"{self.account}-{self.region}"
+                    ),
+                ],
             )
         )
         return quality_step, security_step, deploy_step

@@ -82,24 +82,39 @@ stable name is derived as `<application>-<environment>` (for example,
 
 - installs both pinned Python requirements files;
 - downloads pinned Kiro CLI 2.28.0 and verifies its SHA-256 checksum;
-- runs under bash with `pipefail` and shell-quotes all dynamic arguments;
-- injects only the `KIRO_API_KEY` JSON field from Secrets Manager;
-- accepts the build only if Kiro CLI exits successfully and the final output line is the
-  exact expected verdict (`QUALITY_GATE: PASS`, `SECURITY_GATE: PASS`, or
-  `DEPLOY: SUCCESS`). Missing output and agent crashes fail the build.
+- runs Kiro CLI V3 without a `--model` override, so the assigned Kiro Control/Profile
+  supplies the governed default model;
+- uses `--trust-all-tools` so non-interactive runs cannot deadlock on approvals; the
+  selected agent's explicit deny rules still take precedence;
+- injects the secret's complete plain-text `SecretString` as `KIRO_API_KEY`;
+- injects `ACCOUNT_ID` and `AWS_REGION` into the deploy project so `app.py` can resolve
+  its target environment;
+- captures assistant stdout separately from CLI stderr so runtime log records cannot be
+  concatenated to the verdict;
+- accepts the build only if Kiro CLI exits successfully and emits exactly one complete
+  expected verdict line (`QUALITY_GATE: PASS`, `SECURITY_GATE: PASS`, or
+  `DEPLOY: SUCCESS`). Missing, duplicate, or contradictory verdicts fail the build.
 
-The deploy project installs pinned AWS CDK CLI 2.1139.0. Its role may only assume the
-account-local `cdk-*` bootstrap roles. cdk-nag runs on the pipeline; IAM5 suppressions
-are scoped to the CodeBuild/pipeline constructs and document L2-generated suffix,
-object-path and bootstrap-role wildcards. The artifact KMS key rotates and artifact S3
-access is logged.
+The deploy project installs pinned AWS CDK CLI 2.1139.0. Its role may assume only the
+account-local CDK deploy, file-publishing, image-publishing, and lookup role patterns—not
+the CloudFormation execution role directly. cdk-nag runs on the pipeline; IAM5
+suppressions are scoped to the CodeBuild/pipeline constructs and document L2-generated
+suffix, object-path, and bootstrap-role wildcards. The gitleaks and Kiro CLI downloads
+are checksum-verified. The artifact KMS key rotates and artifact S3 access is logged.
 
 ## Kiro configuration
 
-- `.kiro/agents/`: quality, security, deploy and README-only documentation agents.
+- `.kiro/agents/`: quality, security, deploy and README-only documentation agents,
+  plus `feature-developer`, `test-agent`, and `review-agent` for the versioned-notes
+  cloud-session demo. The developer has narrowly scoped writes; test and review are
+  read-only; all three deny deploys, AWS mutations, pushes, and secret access.
   Local agents create/activate `.venv` and install both requirements files; CI uses its
   ephemeral environment. Shell allowlists include only the tools each prompt requires.
+- `.kiro/specs/versioned-notes/`: requirements, design, and tasks prepared for the
+  autonomous cloud demo. The base branch MUST leave this feature unimplemented.
 - `.kiro/hooks/`: PostFileSave hooks for documentation, quality and security review.
+- `.gitleaks.toml`: extends default gitleaks rules and narrowly excludes only Kiro's
+  non-secret `AIM_CREDS_AGENT_INJECTION` UUID correlation line.
 - `.kiro/skills/`: repository-local `linting` and `testing` workflows.
 - `.kiro/steering/`: this always-on context and Python standards; CDK/naming/tagging
   standards use `fileMatch` for `app.py`, `tech_summit/**/*.py` and `cdk.json`.

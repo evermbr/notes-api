@@ -57,12 +57,18 @@ cdk-nag also runs on this stack; justified IAM5 suppressions are scoped to the c
 whose L2-generated policies need suffix, object-path or CDK bootstrap-role wildcards.
 
 Each CodeBuild gate is a reusable `KiroCliStep` L2 construct with an inline buildspec. It
-installs pinned dependencies, checksum-verifies pinned Kiro CLI 2.28.0, shell-quotes tasks,
-uses `pipefail`, and requires an exact final verdict. Agent crashes, missing verdicts or
-scanner failures cannot silently pass. The deploy project pins AWS CDK CLI 2.1139.0.
+installs pinned dependencies, checksum-verifies pinned Kiro CLI 2.28.0, runs V3 without
+overriding the profile-governed model, and shell-quotes tasks. Assistant stdout is
+captured separately from CLI stderr so transport logs cannot corrupt a verdict line. The
+gate uses `--trust-all-tools` to prevent non-interactive approval deadlocks while each
+agent's capability-level deny rules remain authoritative. It preserves the Kiro CLI exit
+status and accepts exactly one success verdict; agent crashes and missing, duplicate, or contradictory
+verdicts fail closed. The security step also checksum-verifies gitleaks before extraction.
+The deploy project pins AWS CDK CLI 2.1139.0 and can assume only the specific CDK deploy,
+publishing, and lookup role patterns.
 
-The Kiro API key comes from the `KIRO_API_KEY` field in the configured JSON secret. Source
-and secret settings live under `context.sourceConfig` in `cdk.json`.
+The plain API key is stored as the configured secret's complete `SecretString` and is
+injected into CodeBuild as `KIRO_API_KEY`. Source and secret settings live under `context.sourceConfig` in `cdk.json`.
 
 ## Kiro context engineering
 
@@ -70,10 +76,16 @@ and secret settings live under `context.sourceConfig` in `cdk.json`.
   - `python-quality-agent` — whole-repository pylint, pytest, branch coverage and an AI
     quality review; ends with `QUALITY_GATE: PASS|FAIL`.
   - `python-security-agent` — bandit, runtime/dev pip-audit, gitleaks and an AI security
-    review; ends with `SECURITY_GATE: PASS|FAIL`.
+    review; ends with `SECURITY_GATE: PASS|FAIL`. `.gitleaks.toml` keeps the default
+    rules and excludes only Kiro's non-secret `AIM_CREDS_AGENT_INJECTION` UUID shape.
   - `deploy-agent` — synth/diff/deploy only; never destroys resources; ends with
     `DEPLOY: SUCCESS|FAILED`.
   - `doc-agent` — updates only this README when documented behavior becomes stale.
+  - Demo-only autonomous subagents: `feature-developer` writes within constrained source
+    paths; `test-agent` and `review-agent` independently verify changes read-only.
+- **`.kiro/specs/versioned-notes/`** — precommitted requirements, design, and task list
+  for the cloud-session demo; the feature is intentionally not implemented on the base
+  branch.
 - **`.kiro/hooks/`** — PostFileSave hooks trigger documentation, quality and security
   checks.
 - **`.kiro/skills/`** — repository-local `linting` and `testing` workflows.
@@ -82,8 +94,8 @@ and secret settings live under `context.sourceConfig` in `cdk.json`.
   - CDK fileMatch: `cdk-standards.md`, `naming-strategy.md`, `tagging-strategy.md`.
 
 Locally, agents use `.venv` and install both requirements files. CodeBuild installs them
-directly into its ephemeral environment. Agent permissions remain constrained even when
-headless CI uses `--trust-all-tools`.
+directly into its ephemeral environment. Agent permissions remain constrained in headless CI, which pre-approves only the
+`read` and `shell` tools required by these agents.
 
 ## Project layout
 
@@ -98,7 +110,8 @@ lambda/notes_create/handler.py      # POST /notes (write-only table grant)
 lambda/notes_get/handler.py         # GET /notes/{id} (read-only table grant)
 lambda/authorizer/handler.py        # cached Lambda TOKEN authorizer
 tests/unit/                         # handler and CDK assertion tests
-.kiro/                              # agents, hooks, skills and steering
+.gitleaks.toml                     # narrow allowlist over default secret rules
+.kiro/                              # agents, hooks, skills, specs and steering
 ```
 
 ## Setup

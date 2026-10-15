@@ -1,8 +1,8 @@
 """L2 construct for running a Kiro CLI agent as a fail-closed CodeBuild gate.
 
 The construct installs a checksum-verified, pinned Kiro CLI release, invokes one agent
-headlessly, and accepts the build only when the command succeeds and the final output
-line is the exact expected verdict.
+headlessly, and accepts the build only when the command succeeds and emits exactly one
+machine-readable success verdict.
 """
 
 import shlex
@@ -27,6 +27,26 @@ _KIRO_CLI_DOWNLOAD = (
 )
 
 
+def _verdict_check_command(output_file: str, gate: str, success_value: str) -> str:
+    """Build a fail-closed command requiring one exact success verdict line."""
+    check_script = (
+        "import pathlib,sys; "
+        "lines=[line.strip() for line in "
+        "pathlib.Path(sys.argv[1]).read_text(encoding='utf-8', "
+        "errors='replace').splitlines()]; "
+        "verdicts=[line for line in lines if line.startswith(sys.argv[2])]; "
+        "raise SystemExit(0 if verdicts == [sys.argv[3]] else 1)"
+    )
+    arguments = " ".join(
+        shlex.quote(value)
+        for value in (output_file, f"{gate}: ", f"{gate}: {success_value}")
+    )
+    return (
+        f"python3 -c {shlex.quote(check_script)} {arguments} || "
+        f'{{ echo "{gate} expected exactly one success verdict"; exit 1; }}'
+    )
+
+
 class KiroCliStep(PipelineProject):
     """Run one Kiro CLI agent and require its exact success verdict."""
 
@@ -38,14 +58,13 @@ class KiroCliStep(PipelineProject):
     ) -> None:
         agent = shlex.quote(props.agent)
         task = shlex.quote(props.task)
-        out_file = shlex.quote(props.out_file or f"{props.agent}.out")
-        expected_verdict = shlex.quote(f"{props.gate}: {props.success_value}")
+        output_name = props.out_file or f"{props.agent}.out"
+        out_file = shlex.quote(output_name)
 
         env_vars = {
             "KIRO_API_KEY": BuildEnvironmentVariable(
                 type=BuildEnvironmentVariableType.SECRETS_MANAGER,
-                # The configured secret is JSON; inject only its API-key field.
-                value=f"{props.kiro_secret.secret_arn}:KIRO_API_KEY",
+                value=props.kiro_secret.secret_arn,
             ),
             "CI": BuildEnvironmentVariable(value="true"),
         }
@@ -61,22 +80,24 @@ class KiroCliStep(PipelineProject):
                 "| sha256sum -c -"
             ),
             "rm -rf /tmp/kiro-cli-install && mkdir -p /tmp/kiro-cli-install",
-            (
-                f"unzip -q /tmp/{_KIRO_CLI_ARCHIVE} "
-                "-d /tmp/kiro-cli-install"
-            ),
+            f"unzip -q /tmp/{_KIRO_CLI_ARCHIVE} -d /tmp/kiro-cli-install",
             "KIRO_CLI_SKIP_SETUP=1 /tmp/kiro-cli-install/kirocli/install.sh",
             f"rm -rf /tmp/kiro-cli-install /tmp/{_KIRO_CLI_ARCHIVE}",
         ]
 
         run_agent = (
-            'export PATH="$HOME/.local/bin:$PATH" && set -o pipefail && '
-            f"kiro-cli chat --agent {agent} --no-interactive --trust-all-tools "
-            f"{task} 2>&1 | tee {out_file}"
+            'export PATH="$HOME/.local/bin:$PATH" && set -o pipefail; '
+            f"kiro-cli chat --v3 --agent {agent} --no-interactive "
+            f"--trust-all-tools {task} "
+            f"2>{shlex.quote(f'{output_name}.stderr')} | tee {out_file}; "
+            "cli_status=${PIPESTATUS[0]}; "
+            f"cat {shlex.quote(f'{output_name}.stderr')} >&2; "
+            'exit "$cli_status"'
         )
-        require_verdict = (
-            f'if [ "$(tail -n 1 {out_file})" != {expected_verdict} ]; then '
-            f'echo "{props.gate} missing expected success verdict"; exit 1; fi'
+        require_verdict = _verdict_check_command(
+            output_name,
+            props.gate,
+            props.success_value,
         )
 
         build_spec = BuildSpec.from_object(
@@ -96,7 +117,7 @@ class KiroCliStep(PipelineProject):
                         ],
                     },
                 },
-                "artifacts": {"files": [props.out_file or f"{props.agent}.out"]},
+                "artifacts": {"files": [output_name]},
             }
         )
 

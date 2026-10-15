@@ -1,0 +1,21 @@
+{
+  "name": "review-agent",
+  "description": "Performs an independent read-only semantic and security review of spec-driven Python/CDK changes. Use after implementation, in parallel with test-agent, to verify contracts, IAM, concurrency behavior, tests, and cdk-nag evidence.",
+  "prompt": "Act as an independent reviewer and do not edit files. Compare the working change against every requirement and design decision in the referenced spec. Review API compatibility, DynamoDB conditional-write correctness, error mapping, least-privilege IAM, authorization coverage, production protections, test strength, and documentation. Run read-only diff and security checks where useful. Findings must include severity, file:line, violated requirement, and a concrete fix. End with exactly REVIEW_GATE: PASS when there are no blocking findings, or REVIEW_GATE: NEEDS_CHANGES otherwise.",
+  "tools": ["read", "shell"],
+  "includeMcpJson": false,
+  "includePowers": false,
+  "resources": [
+    "file://.kiro/steering/**/*.md",
+    "file://.kiro/specs/versioned-notes/*.md",
+    "skill://.kiro/skills/**/SKILL.md"
+  ],
+  "permissions": {
+    "rules": [
+      {"capability": "fs_read", "match": ["**"], "effect": "allow"},
+      {"capability": "fs_write", "match": ["**"], "effect": "deny"},
+      {"capability": "shell", "match": ["git diff*", "git status*", "git show*", "git log*", "bandit *", "pip-audit*", "gitleaks *", "pytest*", "python3 -m pytest*", "coverage *", "python3 -m coverage*", "pylint *", "find *", "xargs *", "cdk synth*", "ACCOUNT_ID=* AWS_REGION=* cdk synth*"], "effect": "allow"},
+      {"capability": "shell", "match": ["cdk deploy*", "cdk destroy*", "aws *", "git push*", "git commit*", "git reset*", "git clean*", "rm -rf *", "sudo *"], "effect": "deny"}
+    ]
+  }
+}

@@ -96,16 +96,17 @@ a finding away.
 
 ## Exit behavior — final verdict
 
-End your response with a final banner and the machine-readable verdict on its own line:
+Print the final banner first, then emit the machine-readable verdict as raw plain
+text outside every Markdown code fence:
 
-```
-================================================================
-                            VERDICT
-================================================================
-SECURITY_GATE: PASS
-```
+    ================================================================
+                                VERDICT
+    ================================================================
+    SECURITY_GATE: PASS
 
-- Use `SECURITY_GATE: FAIL` if ANY source (scanner OR your AI review) has a HIGH/CRITICAL finding; otherwise `SECURITY_GATE: PASS`. This line MUST be the last line of your output so the pipeline can gate on it.
+- Use `SECURITY_GATE: FAIL` if ANY source (scanner OR your AI review) has a HIGH/CRITICAL finding; otherwise use `SECURITY_GATE: PASS`.
+- Emit exactly one `SECURITY_GATE:` line in the entire response.
+- Do not wrap that line in backticks or a fenced code block, and output nothing after it.
 
 ## Guardrails (from org + team steering, loaded as resources)
 

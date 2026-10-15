@@ -1,0 +1,15 @@
+# Extend the built-in rules; do not replace or weaken the default scanner policy.
+[extend]
+useDefault = true
+
+# Kiro injects a non-secret UUID correlation value into local agent definitions.
+# Ignore only that exact key/value shape under the rule that misclassifies it.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Kiro creds-agent correlation UUID, not a credential"
+  regexTarget = "line"
+  regexes = [
+    '''"AIM_CREDS_AGENT_INJECTION"\s*:\s*"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"'''
+  ]

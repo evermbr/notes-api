@@ -104,16 +104,17 @@ say so and show the correct inline `# pylint: disable=<rule>` with a reason — 
 
 ## Exit behavior — final verdict
 
-End your response with a final banner and the machine-readable verdict on its own line:
+Print the final banner first, then emit the machine-readable verdict as raw plain
+text outside every Markdown code fence:
 
-```
-================================================================
-                            VERDICT
-================================================================
-QUALITY_GATE: PASS
-```
+    ================================================================
+                                VERDICT
+    ================================================================
+    QUALITY_GATE: PASS
 
-- Use `QUALITY_GATE: FAIL` if pylint is below threshold, any test fails, coverage is below `fail_under`, OR your AI review finds a serious quality defect; otherwise `QUALITY_GATE: PASS`. This line MUST be the last line of your output so the pipeline can gate on it.
+- Use `QUALITY_GATE: FAIL` if pylint is below threshold, any test fails, coverage is below `fail_under`, OR your AI review finds a serious quality defect; otherwise use `QUALITY_GATE: PASS`.
+- Emit exactly one `QUALITY_GATE:` line in the entire response.
+- Do not wrap that line in backticks or a fenced code block, and output nothing after it.
 
 ## Guardrails (from org + team steering, loaded as resources)
 
