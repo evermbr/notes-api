@@ -438,7 +438,15 @@ disable=raw-checker-failed,
         deprecated-pragma,
         use-symbolic-message-instead,
         use-implicit-booleaness-not-comparison-to-string,
-        use-implicit-booleaness-not-comparison-to-zero
+        use-implicit-booleaness-not-comparison-to-zero,
+        # duplicate-code (R0801): the Notes API is intentionally one
+        # single-purpose Lambda per operation, each an independently deployable
+        # asset with no shared production module (see
+        # .kiro/specs/versioned-notes/design.md). The small response/header/
+        # If-Match helpers and the per-handler test doubles therefore repeat by
+        # design; this is a cross-file report that cannot be scoped with an
+        # inline disable.
+        duplicate-code
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option

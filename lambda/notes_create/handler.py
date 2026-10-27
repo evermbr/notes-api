@@ -68,6 +68,11 @@ def handler(event: dict, _context=None) -> dict:
             {"error": "Fields 'title' and 'content' must be non-empty strings."},
         )
 
-    note = {"id": _generate_id(), "title": title, "content": content}
+    note = {
+        "id": _generate_id(),
+        "title": title,
+        "content": content,
+        "version": 1,
+    }
     _table().put_item(Item=note)
     return _response(201, note)

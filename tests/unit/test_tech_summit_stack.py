@@ -60,27 +60,85 @@ def test_production_data_is_protected():
 
 
 def test_notes_lambdas_created():
-    """Create, get and authorizer Lambdas use the supported project runtime."""
+    """Create, get, update, delete and authorizer Lambdas use the project runtime."""
     template = _template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {"Handler": "handler.handler", "Runtime": "python3.13"},
     )
-    template.resource_count_is("AWS::Lambda::Function", 3)
+    # create, get, update, delete, authorizer
+    template.resource_count_is("AWS::Lambda::Function", 5)
 
 
 def test_methods_wired_per_operation():
-    """The API exposes exactly one POST and one GET operation."""
+    """The API exposes POST, GET, PATCH and DELETE operations under custom auth."""
     template = _template()
     methods = template.find_resources("AWS::ApiGateway::Method")
     assert {resource["Properties"]["HttpMethod"] for resource in methods.values()} == {
         "GET",
         "POST",
+        "PATCH",
+        "DELETE",
     }
     assert all(
         resource["Properties"]["AuthorizationType"] == "CUSTOM"
         for resource in methods.values()
     )
+
+
+def test_update_lambda_least_privilege_actions():
+    """The update Lambda is granted exactly GetItem and UpdateItem on the table."""
+    template = _template()
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": assertions.Match.array_with(
+                    [
+                        assertions.Match.object_like(
+                            {
+                                "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+                                "Effect": "Allow",
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
+def test_delete_lambda_least_privilege_actions():
+    """The delete Lambda is granted exactly GetItem and DeleteItem on the table."""
+    template = _template()
+    template.has_resource_properties(
+        "AWS::IAM::Policy",
+        {
+            "PolicyDocument": {
+                "Statement": assertions.Match.array_with(
+                    [
+                        assertions.Match.object_like(
+                            {
+                                "Action": ["dynamodb:GetItem", "dynamodb:DeleteItem"],
+                                "Effect": "Allow",
+                            }
+                        )
+                    ]
+                )
+            }
+        },
+    )
+
+
+def test_no_wildcard_dynamodb_actions():
+    """No policy grants a wildcard DynamoDB action."""
+    template = _template()
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            actions = statement["Action"]
+            actions = actions if isinstance(actions, list) else [actions]
+            assert "dynamodb:*" not in actions
+            assert "*" not in actions
 
 
 def test_least_privilege_table_grants():

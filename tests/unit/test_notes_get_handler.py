@@ -38,12 +38,13 @@ def _get_event(note_id):
 
 
 def test_get_note_found(handler_and_store):
-    """An existing note is returned as JSON."""
+    """An existing note is returned as JSON including its stored version."""
     handler_module, store = handler_and_store
     store["abc123"] = {
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
     }
 
     response = handler_module.handler(_get_event("abc123"))
@@ -53,6 +54,27 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
+    }
+
+
+def test_get_legacy_note_defaults_to_version_one(handler_and_store):
+    """A legacy note without a stored version is exposed as version 1."""
+    handler_module, store = handler_and_store
+    store["legacy1"] = {
+        "id": "legacy1",
+        "title": "Old",
+        "content": "no version stored",
+    }
+
+    response = handler_module.handler(_get_event("legacy1"))
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"]) == {
+        "id": "legacy1",
+        "title": "Old",
+        "content": "no version stored",
+        "version": 1,
     }
 
 
