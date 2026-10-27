@@ -28,56 +28,52 @@ API (`proxy=False`) and a shared DynamoDB table:
 - `POST /notes` with `{"title": "...", "content": "..."}` →
   `NotesCreateFunction` stores a note and returns `201` with
   `{id, title, content, version}`. A new note always starts at `version: 1`.
-- `GET /notes/{id}` → `NotesGetFunction` returns `200` with
-  `{id, title, content, version}`, or `404`. A legacy note stored without a version is
-  reported as `version: 1`.
-- `PATCH /notes/{id}` → `NotesUpdateFunction` applies an optimistic-concurrency update.
-- `DELETE /notes/{id}` → `NotesDeleteFunction` applies an optimistic-concurrency delete.
+- `GET /notes/{id}` → `NotesGetFunction` returns the note or `404`. The response adds
+  the integer `version`; a legacy note stored before versioning is reported as
+  `version: 1`.
+- `PATCH /notes/{id}` → `NotesUpdateFunction` applies an optimistic-concurrency update
+  and returns `200` with the complete updated note (see "Optimistic concurrency").
+- `DELETE /notes/{id}` → `NotesDeleteFunction` performs an optimistic-concurrency
+  delete and returns `204` with an empty body.
 
-The create Lambda has write-only table access and the get Lambda has read-only access.
-The update Lambda is granted exactly `dynamodb:GetItem` + `dynamodb:UpdateItem`, and the
-delete Lambda exactly `dynamodb:GetItem` + `dynamodb:DeleteItem` — no broad read/write or
-wildcard actions. Every method uses the same Lambda token authorizer backed by an
+The create Lambda has write-only table access and the get Lambda read-only access. The
+update Lambda is granted exactly `dynamodb:GetItem` + `dynamodb:UpdateItem`, and the
+delete Lambda exactly `dynamodb:GetItem` + `dynamodb:DeleteItem` — no broad grants and no
+wildcard IAM actions. Every method uses the same Lambda token authorizer backed by an
 auto-generated Secrets Manager key. The authorizer performs a constant-time comparison
 and returns a stage-wide policy so its five-minute cache works across routes.
 
-#### Optimistic concurrency (`version`)
+#### Optimistic concurrency (`PATCH` / `DELETE`)
 
-Every note carries a monotonically increasing integer `version`. `PATCH` and `DELETE`
-require an `If-Match` request header carrying the version the client last read (an
-unquoted positive decimal integer; the header name is matched case-insensitively):
+`PATCH` and `DELETE` require a case-insensitive `If-Match` header carrying the version
+the client last observed, as an unquoted positive integer (for example `If-Match: 3`).
 
-```http
-PATCH /notes/{id}
-If-Match: 3
-Content-Type: application/json
+`PATCH` accepts a JSON body with at least one of `title` or `content`; each supplied
+value must be a non-empty, non-whitespace string and no other fields are allowed. A
+successful update applies the supplied fields, increments `version` by exactly one, and
+returns the full note. `DELETE` takes no body.
 
-{"title": "Updated"}
-```
+Both operations run as a single atomic DynamoDB conditional write, so concurrent callers
+cannot silently overwrite or delete a note that changed after they read it. A legacy note
+without a stored version matches `If-Match: 1` (and a successful `PATCH` makes it
+`version: 2`).
 
-- `PATCH` accepts a JSON body with at least one of `title` or `content`; each supplied
-  value must be a non-empty, non-whitespace string, and no other field is allowed. On a
-  version match it atomically updates the supplied fields, increments `version` by one,
-  and returns `200` with the complete updated note. A legacy note with no stored version
-  matches `If-Match: 1` and becomes `version: 2`.
-- `DELETE` requires only the `If-Match` header. On a version match it atomically deletes
-  the note and returns `204` with an empty body. A legacy note matches `If-Match: 1`.
-
-Both operations use a single atomic conditional DynamoDB call and map the outcome to:
+Response mapping:
 
 | Situation | Status |
 |---|---:|
-| Successful update | `200` |
-| Successful delete | `204` |
-| Missing/invalid `If-Match`, malformed JSON, or invalid/unsupported fields | `400` |
-| Note not found | `404` |
-| Stored version differs from `If-Match` (stale read) | `409` |
+| Missing/invalid `If-Match`, malformed JSON, unknown field, or empty value | `400` |
+| Note does not exist | `404` |
+| Note exists but its stored version differs from `If-Match` (stale) | `409` |
+| Successful `PATCH` | `200` with the updated note |
+| Successful `DELETE` | `204` with an empty body |
 
-A `400`, `404`, or `409` never modifies or deletes the note. Any unexpected DynamoDB or
-service error is re-raised so the invocation fails visibly rather than masking a fault.
+Unexpected DynamoDB/service errors are not mapped to a response; they are re-raised so
+the invocation fails visibly.
 
-The API surface starts minimal on purpose: listing notes remains a live-demo extension
-point. Add it as a new Lambda + least-privilege grant + explicit API method.
+The API surface starts minimal on purpose; listing notes (`GET /notes`) remains a
+live-demo extension point. Add it as a new Lambda + least-privilege grant + explicit API
+method.
 
 DynamoDB uses on-demand billing, AWS-managed encryption and point-in-time recovery. In
 `prod`, deletion protection is enabled and both the table and API-key secret are retained;
@@ -150,8 +146,8 @@ tech_summit/kiro_cli_step_props.py  # gate configuration
 tech_summit/source_config.py        # SourceConfig and PipelineConfig
 lambda/notes_create/handler.py      # POST /notes (write-only table grant)
 lambda/notes_get/handler.py         # GET /notes/{id} (read-only table grant)
-lambda/notes_update/handler.py      # PATCH /notes/{id} (GetItem+UpdateItem grant)
-lambda/notes_delete/handler.py      # DELETE /notes/{id} (GetItem+DeleteItem grant)
+lambda/notes_update/handler.py      # PATCH /notes/{id} (GetItem + UpdateItem grant)
+lambda/notes_delete/handler.py      # DELETE /notes/{id} (GetItem + DeleteItem grant)
 lambda/authorizer/handler.py        # cached Lambda TOKEN authorizer
 tests/unit/                         # handler and CDK assertion tests
 .gitleaks.toml                     # narrow allowlist over default secret rules
@@ -222,15 +218,17 @@ curl -X POST "$API_URL/notes" \
 
 curl "$API_URL/notes/<id>" -H "Authorization: $KEY"
 
-# Optimistic-concurrency update: If-Match must equal the note's current version
+# Update: send the version you last read in If-Match (here, 1)
 curl -X PATCH "$API_URL/notes/<id>" \
   -H "Authorization: $KEY" \
-  -H "If-Match: 1" \
   -H "Content-Type: application/json" \
-  -d '{"title": "Updated title"}'
+  -H "If-Match: 1" \
+  -d '{"content": "milk, eggs and bread"}'
 
-# Optimistic-concurrency delete
+# Delete: send the current version in If-Match (here, 2)
 curl -X DELETE "$API_URL/notes/<id>" \
   -H "Authorization: $KEY" \
   -H "If-Match: 2"
 ```
+
+A mismatched `If-Match` returns `409 Conflict`; an unknown id returns `404 Not Found`.

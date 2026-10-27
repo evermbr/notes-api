@@ -1,27 +1,24 @@
 """Lambda handler for deleting a note (``DELETE /notes/{id}``), backed by DynamoDB.
 
-Single-purpose function: it only reads and conditionally deletes notes, and its
-execution role is granted exactly ``dynamodb:GetItem`` + ``dynamodb:DeleteItem`` on the
-table. Invoked through an API Gateway REST (non-proxy) integration on the
-``/notes/{id}`` resource, which supplies the id as a path parameter.
+Single-purpose function implementing optimistic concurrency: it only reads and
+conditionally deletes notes, and its execution role is granted exactly
+``dynamodb:GetItem`` and ``dynamodb:DeleteItem`` on the table. Invoked through an API
+Gateway REST (non-proxy) integration on the ``/notes/{id}`` resource.
 
-Optimistic concurrency: the client sends the version it last read in a case-insensitive
-``If-Match`` header (an unquoted positive decimal integer). The delete is one atomic
-conditional ``DeleteItem`` that only succeeds when the stored version matches; a legacy
-item with no stored version matches ``If-Match: 1``.
+Concurrency model:
+  * The caller sends the version it last observed in a case-insensitive ``If-Match``
+    header (an unquoted positive integer).
+  * A single atomic conditional ``DeleteItem`` removes the note only when the stored
+    version matches. A legacy item without a stored ``version`` matches ``If-Match: 1``.
 
 Failure modes:
-  * missing ``id`` path parameter            -> 400
-  * missing/invalid ``If-Match`` header      -> 400
-  * note does not exist                      -> 404
-  * stored version differs from ``If-Match`` -> 409
-Every other AWS/service error is re-raised so the invocation fails visibly.
+  * missing ``id`` path parameter             -> 400
+  * missing/invalid ``If-Match`` header       -> 400
+  * note does not exist                       -> 404
+  * note exists but stored version differs    -> 409
+Any other AWS/service error is re-raised so the invocation fails visibly.
+On success the handler returns ``204`` with an empty body.
 """
-
-# Each Lambda asset is deliberately self-contained and independently deployable
-# (see design.md): the small _table/_error/_match_version helpers are duplicated
-# across handlers on purpose rather than extracted into shared runtime code.
-# pylint: disable=duplicate-code
 
 import json
 import os
@@ -40,63 +37,85 @@ def _table():
     return _dynamodb.Table(_TABLE_NAME)
 
 
-def _error(status: int, message: str) -> dict:
-    """Build a JSON API error response for the API Gateway integration."""
+def _response(status: int, body: dict) -> dict:
+    """Build a JSON API response for the API Gateway integration."""
     return {
         "statusCode": status,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({"error": message}),
+        "body": json.dumps(body),
     }
 
 
-def _match_version(headers) -> int | None:
-    """Return the positive integer from a case-insensitive ``If-Match`` header.
+def _no_content_response() -> dict:
+    """Build a 204 response with an empty body for a successful delete."""
+    return {"statusCode": 204, "headers": {}, "body": ""}
 
-    Returns ``None`` when the header is absent or not an unquoted positive integer.
-    """
-    for key, value in (headers or {}).items():
-        if key.lower() == "if-match":
-            raw = value.strip() if isinstance(value, str) else ""
-            if raw.isdigit() and int(raw) > 0:
-                return int(raw)
-            return None
+
+def _header(event: dict, name: str):
+    """Return a header value by case-insensitive name, or None when absent."""
+    headers = event.get("headers") or {}
+    target = name.lower()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == target:
+            return value
     return None
 
 
-def _conflict_response(table, note_id: str) -> dict:
+def _parse_if_match(event: dict):
+    """Return the positive integer ``If-Match`` version, or None when invalid."""
+    raw = _header(event, "If-Match")
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    if not candidate.isdigit():
+        return None
+    value = int(candidate)
+    return value if value >= 1 else None
+
+
+def _apply_delete(note_id: str, expected: int) -> None:
+    """Run one atomic conditional DeleteItem; raise ClientError on a failed condition."""
+    _table().delete_item(
+        Key={"id": note_id},
+        ConditionExpression=(
+            "attribute_exists(id) AND "
+            "(#v = :expected OR "
+            "(attribute_not_exists(#v) AND :expected = :initial))"
+        ),
+        ExpressionAttributeNames={"#v": "version"},
+        ExpressionAttributeValues={
+            ":expected": expected,
+            ":initial": _INITIAL_VERSION,
+        },
+    )
+
+
+def _conditional_failure_response(note_id: str) -> dict:
     """Distinguish a missing note (404) from a stale version (409) after a failure."""
-    if table.get_item(Key={"id": note_id}).get("Item"):
-        return _error(409, "Note version does not match If-Match.")
-    return _error(404, "Note not found.")
+    item = _table().get_item(Key={"id": note_id}).get("Item")
+    if not item:
+        return _response(404, {"error": "Note not found."})
+    return _response(409, {"error": "Note version does not match If-Match header."})
 
 
 def handler(event: dict, _context=None) -> dict:
-    """Validate the request and perform one atomic conditional delete of the note."""
+    """Validate the request, apply a conditional delete, and map the outcome."""
     note_id = (event.get("pathParameters") or {}).get("id", "")
     if not note_id:
-        return _error(400, "Provide a note id: DELETE /notes/{id}.")
+        return _response(400, {"error": "Provide a note id: DELETE /notes/{id}."})
 
-    expected = _match_version(event.get("headers"))
+    expected = _parse_if_match(event)
     if expected is None:
-        return _error(400, "Provide a positive integer If-Match header.")
-
-    table = _table()
-    try:
-        table.delete_item(
-            Key={"id": note_id},
-            ConditionExpression=(
-                "attribute_exists(id) AND (version = :expected OR "
-                "(attribute_not_exists(version) AND :expected = :initial))"
-            ),
-            ExpressionAttributeValues={
-                ":expected": expected,
-                ":initial": _INITIAL_VERSION,
-            },
-            ReturnValues="ALL_OLD",
+        return _response(
+            400,
+            {"error": "Provide a positive integer If-Match header."},
         )
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            return _conflict_response(table, note_id)
+
+    try:
+        _apply_delete(note_id, expected)
+    except ClientError as error:
+        if error.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return _conditional_failure_response(note_id)
         raise
 
-    return {"statusCode": 204, "headers": {}, "body": ""}
+    return _no_content_response()
