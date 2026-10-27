@@ -44,6 +44,7 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
     }
 
     response = handler_module.handler(_get_event("abc123"))
@@ -53,6 +54,27 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
+    }
+
+
+def test_get_legacy_note_defaults_to_version_one(handler_and_store):
+    """A stored item with no version is exposed as version 1."""
+    handler_module, store = handler_and_store
+    store["legacy1"] = {
+        "id": "legacy1",
+        "title": "Old",
+        "content": "no version stored",
+    }
+
+    response = handler_module.handler(_get_event("legacy1"))
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"]) == {
+        "id": "legacy1",
+        "title": "Old",
+        "content": "no version stored",
+        "version": 1,
     }
 
 

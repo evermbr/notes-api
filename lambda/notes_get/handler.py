@@ -45,5 +45,10 @@ def handler(event: dict, _context=None) -> dict:
 
     return _response(
         200,
-        {"id": item["id"], "title": item["title"], "content": item["content"]},
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "content": item["content"],
+            "version": int(item.get("version", 1)),
+        },
     )

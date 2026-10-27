@@ -61,27 +61,27 @@ class TechSummitStack(Stack):
 
         # One single-purpose Lambda per operation; each gets only the table access
         # required for that operation.
-        create_fn = Function(
-            self,
-            "NotesCreateFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_create"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
+        fns = {
+            name: self._notes_function(name, asset, table)
+            for name, asset in (
+                ("NotesCreateFunction", "lambda/notes_create"),
+                ("NotesGetFunction", "lambda/notes_get"),
+                ("NotesUpdateFunction", "lambda/notes_update"),
+                ("NotesDeleteFunction", "lambda/notes_delete"),
+            )
+        }
+        create_fn = fns["NotesCreateFunction"]
         table.grant_write_data(create_fn)
-
-        get_fn = Function(
-            self,
-            "NotesGetFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_get"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
+        table.grant_read_data(fns["NotesGetFunction"])
+        # Conditional update reads the current item (to map 404 vs 409) and performs the
+        # atomic compare-and-swap write: exactly GetItem + UpdateItem. Conditional delete
+        # does the same with a conditional delete: exactly GetItem + DeleteItem.
+        table.grant(
+            fns["NotesUpdateFunction"], "dynamodb:GetItem", "dynamodb:UpdateItem"
         )
-        table.grant_read_data(get_fn)
+        table.grant(
+            fns["NotesDeleteFunction"], "dynamodb:GetItem", "dynamodb:DeleteItem"
+        )
 
         # Secrets Manager generates the API key; no credential is stored in source.
         api_key_secret = Secret(
@@ -131,13 +131,15 @@ class TechSummitStack(Stack):
         notes.add_method("POST", LambdaIntegration(create_fn))
 
         note = notes.add_resource("{id}")
-        note.add_method("GET", LambdaIntegration(get_fn))
+        note.add_method("GET", LambdaIntegration(fns["NotesGetFunction"]))
+        note.add_method("PATCH", LambdaIntegration(fns["NotesUpdateFunction"]))
+        note.add_method("DELETE", LambdaIntegration(fns["NotesDeleteFunction"]))
 
-        # The three Lambda service roles use the standard CDK-managed basic execution
+        # Every Lambda service role uses the standard CDK-managed basic execution
         # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
         # demo rather than tracking a newly released runtime automatically.
         NagSuppressions.add_resource_suppressions(
-            [create_fn, get_fn, authorizer_fn],
+            [*fns.values(), authorizer_fn],
             [
                 {
                     "id": "AwsSolutions-IAM4",
@@ -204,4 +206,20 @@ class TechSummitStack(Stack):
                 },
             ],
             apply_to_children=True,
+        )
+
+    def _notes_function(self, construct_id: str, asset_dir: str, table: Table):
+        """Build a single-purpose Notes Lambda sharing the pinned runtime and table env.
+
+        Table access is granted by the caller so each function keeps a least-privilege,
+        operation-specific grant.
+        """
+        return Function(
+            self,
+            construct_id,
+            runtime=Runtime.PYTHON_3_13,
+            handler="handler.handler",
+            code=Code.from_asset(asset_dir),
+            timeout=Duration.seconds(10),
+            environment={"TABLE_NAME": table.table_name},
         )

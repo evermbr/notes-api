@@ -60,22 +60,25 @@ def test_production_data_is_protected():
 
 
 def test_notes_lambdas_created():
-    """Create, get and authorizer Lambdas use the supported project runtime."""
+    """Create, get, update, delete and authorizer Lambdas use the project runtime."""
     template = _template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {"Handler": "handler.handler", "Runtime": "python3.13"},
     )
-    template.resource_count_is("AWS::Lambda::Function", 3)
+    # create, get, update, delete, authorizer
+    template.resource_count_is("AWS::Lambda::Function", 5)
 
 
 def test_methods_wired_per_operation():
-    """The API exposes exactly one POST and one GET operation."""
+    """The API exposes POST, GET and the new PATCH and DELETE operations."""
     template = _template()
     methods = template.find_resources("AWS::ApiGateway::Method")
     assert {resource["Properties"]["HttpMethod"] for resource in methods.values()} == {
         "GET",
         "POST",
+        "PATCH",
+        "DELETE",
     }
     assert all(
         resource["Properties"]["AuthorizationType"] == "CUSTOM"
@@ -124,6 +127,47 @@ def test_least_privilege_table_grants():
             }
         },
     )
+
+
+def _policy_action_sets(template):
+    """Return the set of DynamoDB action tuples granted across all IAM policies."""
+    action_sets = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            actions = action if isinstance(action, list) else [action]
+            dynamo = tuple(
+                a for a in actions if isinstance(a, str) and a.startswith("dynamodb:")
+            )
+            if dynamo:
+                action_sets.append(frozenset(dynamo))
+    return action_sets
+
+
+def test_update_lambda_gets_only_get_and_update_actions():
+    """The update Lambda receives exactly GetItem + UpdateItem on the table."""
+    template = _template()
+    assert (
+        frozenset({"dynamodb:GetItem", "dynamodb:UpdateItem"})
+        in _policy_action_sets(template)
+    )
+
+
+def test_delete_lambda_gets_only_get_and_delete_actions():
+    """The delete Lambda receives exactly GetItem + DeleteItem on the table."""
+    template = _template()
+    assert (
+        frozenset({"dynamodb:GetItem", "dynamodb:DeleteItem"})
+        in _policy_action_sets(template)
+    )
+
+
+def test_no_wildcard_dynamodb_actions():
+    """No granted policy uses a wildcard DynamoDB action."""
+    template = _template()
+    for actions in _policy_action_sets(template):
+        assert all(not action.endswith(":*") for action in actions)
+        assert "dynamodb:*" not in actions
 
 
 def test_api_gateway_created_for_environment():
