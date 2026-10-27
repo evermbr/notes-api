@@ -1,6 +1,6 @@
-# tech-summit-demo
+# notes-api
 
-A small AWS CDK (Python) project used as a Tech Summit demo for **Kiro-driven quality,
+A small AWS CDK (Python) project used to demo **Kiro-driven quality,
 security and deployment gating**. It combines a minimal Notes API with a CI/CD pipeline
 that runs governed Kiro CLI agents locally on save and headlessly in CodeBuild.
 
