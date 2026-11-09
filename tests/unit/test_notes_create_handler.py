@@ -45,7 +45,9 @@ def test_create_note_success(handler_and_store):
     assert body["title"] == "Shopping"
     assert body["content"] == "milk and eggs"
     assert len(body["id"]) == 10
+    assert body["version"] == 1
     assert store[body["id"]]["content"] == "milk and eggs"
+    assert store[body["id"]]["version"] == 1
 
 
 def test_create_rejects_missing_fields(handler_and_store):
