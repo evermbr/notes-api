@@ -26,16 +26,55 @@ A **Notes API** with one single-purpose Lambda per operation behind an API Gatew
 API (`proxy=False`) and a shared DynamoDB table:
 
 - `POST /notes` with `{"title": "...", "content": "..."}` →
-  `NotesCreateFunction` stores a note and returns `201` with `{id, title, content}`.
-- `GET /notes/{id}` → `NotesGetFunction` returns the note or `404`.
+  `NotesCreateFunction` stores a note with `version: 1` and returns `201` with
+  `{id, title, content, version}`.
+- `GET /notes/{id}` → `NotesGetFunction` returns `{id, title, content, version}` or `404`.
+  A legacy note stored without a version is returned as version `1`.
+- `PATCH /notes/{id}` → `NotesUpdateFunction` applies a partial update with optimistic
+  concurrency (see below).
+- `DELETE /notes/{id}` → `NotesDeleteFunction` deletes a note with optimistic concurrency.
 
-The create Lambda has write-only table access; the get Lambda has read-only access. Every
-method uses a Lambda token authorizer backed by an auto-generated Secrets Manager key.
+The create Lambda has write-only table access and the get Lambda read-only access. The
+update Lambda is granted only `dynamodb:GetItem` + `dynamodb:UpdateItem`, and the delete
+Lambda only `dynamodb:GetItem` + `dynamodb:DeleteItem`; both grants are scoped to the
+Notes table ARN. Every method uses a Lambda token authorizer backed by an auto-generated
+Secrets Manager key.
 The authorizer performs a constant-time comparison and returns a stage-wide policy so its
 five-minute cache works across routes.
 
-The API surface starts minimal on purpose: list, update and delete are live-demo extension
-points. Add each as a new Lambda + least-privilege grant + explicit API method.
+#### Versioned updates and deletes
+
+`PATCH` and `DELETE` require an `If-Match` header (case-insensitive name) holding the
+positive integer `version` the client last read (unquoted decimal digits only). Each
+operation is one atomic DynamoDB conditional write, so a concurrent change can never be
+silently overwritten or deleted.
+
+```http
+PATCH /notes/abc123
+If-Match: 3
+Content-Type: application/json
+
+{"title": "Updated"}
+```
+
+`PATCH` accepts `title`, `content` or both (non-empty strings); unknown fields are
+rejected. Success returns `200` with the complete note and `version` incremented by one
+(`4` above). `DELETE /notes/abc123` with `If-Match: 4` returns `204` and an empty body.
+
+| Situation | Status |
+|---|---:|
+| Malformed JSON, no/unknown fields, empty values, missing/invalid `If-Match` | 400 |
+| Note not found | 404 |
+| Stale version (`If-Match` differs from the stored version) | 409 |
+| Successful `PATCH` / `DELETE` | 200 / 204 |
+| Unexpected DynamoDB/service error | Lambda invocation fails (API Gateway `5xx`) |
+
+A legacy note without a stored version matches `If-Match: 1`; a successful `PATCH`
+makes it version `2`. After a conditional failure the handler performs a `GetItem` to
+distinguish `404` from `409`.
+
+`GET /notes` (list) remains a live-demo extension point: add it as a new Lambda +
+least-privilege grant + explicit API method.
 
 DynamoDB uses on-demand billing, AWS-managed encryption and point-in-time recovery. In
 `prod`, deletion protection is enabled and both the table and API-key secret are retained;
@@ -108,6 +147,8 @@ tech_summit/kiro_cli_step_props.py  # gate configuration
 tech_summit/source_config.py        # SourceConfig and PipelineConfig
 lambda/notes_create/handler.py      # POST /notes (write-only table grant)
 lambda/notes_get/handler.py         # GET /notes/{id} (read-only table grant)
+lambda/notes_update/handler.py      # PATCH /notes/{id} (GetItem + UpdateItem grant)
+lambda/notes_delete/handler.py      # DELETE /notes/{id} (GetItem + DeleteItem grant)
 lambda/authorizer/handler.py        # cached Lambda TOKEN authorizer
 tests/unit/                         # handler and CDK assertion tests
 .gitleaks.toml                     # narrow allowlist over default secret rules
@@ -177,4 +218,12 @@ curl -X POST "$API_URL/notes" \
   -d '{"title": "Shopping", "content": "milk and eggs"}'
 
 curl "$API_URL/notes/<id>" -H "Authorization: $KEY"
+
+# Update / delete with the version returned by the last read or write
+curl -X PATCH "$API_URL/notes/<id>" \
+  -H "Authorization: $KEY" -H "If-Match: 1" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated"}'
+
+curl -X DELETE "$API_URL/notes/<id>" -H "Authorization: $KEY" -H "If-Match: 2"
 ```

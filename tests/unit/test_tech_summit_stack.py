@@ -60,22 +60,24 @@ def test_production_data_is_protected():
 
 
 def test_notes_lambdas_created():
-    """Create, get and authorizer Lambdas use the supported project runtime."""
+    """Create, get, update, delete and authorizer Lambdas use the supported project runtime."""
     template = _template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {"Handler": "handler.handler", "Runtime": "python3.13"},
     )
-    template.resource_count_is("AWS::Lambda::Function", 3)
+    template.resource_count_is("AWS::Lambda::Function", 5)
 
 
 def test_methods_wired_per_operation():
-    """The API exposes exactly one POST and one GET operation."""
+    """The API exposes explicit POST, GET, PATCH and DELETE operations."""
     template = _template()
     methods = template.find_resources("AWS::ApiGateway::Method")
     assert {resource["Properties"]["HttpMethod"] for resource in methods.values()} == {
         "GET",
         "POST",
+        "PATCH",
+        "DELETE",
     }
     assert all(
         resource["Properties"]["AuthorizationType"] == "CUSTOM"
@@ -149,4 +151,107 @@ def test_api_protected_by_custom_authorizer():
     template.has_resource_properties(
         "AWS::ApiGateway::Authorizer",
         {"Type": "TOKEN"},
+    )
+
+
+def _function_logical_id(template, prefix):
+    functions = template.find_resources("AWS::Lambda::Function")
+    matches = [key for key in functions if key.startswith(prefix)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _table_statements_for(template, function_prefix):
+    """Return the DynamoDB policy statements attached to the function's role."""
+    function_id = _function_logical_id(template, function_prefix)
+    role_id = template.to_json()["Resources"][function_id]["Properties"]["Role"][
+        "Fn::GetAtt"
+    ][0]
+    statements = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        if {"Ref": role_id} not in policy["Properties"]["Roles"]:
+            continue
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            actions = statement["Action"]
+            if isinstance(actions, str):
+                actions = [actions]
+            if any(a.startswith("dynamodb:") for a in actions):
+                statements.append({**statement, "Action": actions})
+    return statements
+
+
+def _table_actions_for(template, function_prefix):
+    """Return the DynamoDB actions granted to the role of the given function."""
+    return {
+        action
+        for statement in _table_statements_for(template, function_prefix)
+        for action in statement["Action"]
+        if action.startswith("dynamodb:")
+    }
+
+
+def test_patch_and_delete_methods_on_note_resource():
+    """PATCH and DELETE are explicit custom-authorized methods on /notes/{id}."""
+    template = _template()
+    methods = template.find_resources("AWS::ApiGateway::Method")
+    by_method = {
+        resource["Properties"]["HttpMethod"]: resource["Properties"]
+        for resource in methods.values()
+    }
+    for http_method in ("PATCH", "DELETE"):
+        properties = by_method[http_method]
+        assert properties["AuthorizationType"] == "CUSTOM"
+        assert "AuthorizerId" in properties
+        assert properties["Integration"]["Type"] == "AWS_PROXY"
+    template.has_resource_properties(
+        "AWS::ApiGateway::Resource", {"PathPart": "{id}"}
+    )
+
+
+def test_update_and_delete_functions_have_own_assets_and_table_name():
+    """Update and delete use separate code assets, each configured with the table."""
+    template = _template()
+    functions = template.to_json()["Resources"]
+    table_ids = list(template.find_resources("AWS::DynamoDB::Table"))
+    assert len(table_ids) == 1
+    asset_keys = {}
+    for prefix in (
+        "NotesCreateFunction",
+        "NotesGetFunction",
+        "NotesUpdateFunction",
+        "NotesDeleteFunction",
+    ):
+        properties = functions[_function_logical_id(template, prefix)]["Properties"]
+        assert properties["Environment"]["Variables"]["TABLE_NAME"] == {
+            "Ref": table_ids[0]
+        }
+        asset_keys[prefix] = properties["Code"]["S3Key"]
+    assert len(set(asset_keys.values())) == len(asset_keys)
+
+
+def test_update_and_delete_have_narrow_dynamodb_actions():
+    """Update gets only Get+Update; delete gets only Get+Delete."""
+    template = _template()
+    assert _table_actions_for(template, "NotesUpdateFunction") == {
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+    }
+    assert _table_actions_for(template, "NotesDeleteFunction") == {
+        "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+    }
+    table_id = next(iter(template.find_resources("AWS::DynamoDB::Table")))
+    table_arn = {"Fn::GetAtt": [table_id, "Arn"]}
+    for prefix in ("NotesUpdateFunction", "NotesDeleteFunction"):
+        statements = _table_statements_for(template, prefix)
+        assert len(statements) == 1
+        assert statements[0]["Effect"] == "Allow"
+        assert statements[0]["Resource"] == [table_arn]
+    # Existing operations keep their previous grants; they must not gain
+    # the mutating actions reserved for update/delete.
+    assert "dynamodb:DeleteItem" not in _table_actions_for(
+        template, "NotesGetFunction"
+    )
+    assert "dynamodb:UpdateItem" not in _table_actions_for(
+        template, "NotesGetFunction"
     )

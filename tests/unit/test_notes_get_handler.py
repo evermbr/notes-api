@@ -1,6 +1,7 @@
 """Unit tests for the single-purpose ``GET /notes/{id}`` Lambda."""
 
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -53,7 +54,24 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 1,
     }
+
+
+def test_get_note_returns_stored_version(handler_and_store):
+    """A stored version (DynamoDB Decimal-like) is returned as an integer."""
+    handler_module, store = handler_and_store
+    store["abc123"] = {
+        "id": "abc123",
+        "title": "Note",
+        "content": "text",
+        "version": Decimal("4"),
+    }
+
+    body = json.loads(handler_module.handler(_get_event("abc123"))["body"])
+
+    assert body["version"] == 4
+    assert isinstance(body["version"], int)
 
 
 def test_get_note_not_found(handler_and_store):

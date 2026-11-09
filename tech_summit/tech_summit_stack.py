@@ -59,29 +59,7 @@ class TechSummitStack(Stack):
             removal_policy=data_removal_policy,
         )
 
-        # One single-purpose Lambda per operation; each gets only the table access
-        # required for that operation.
-        create_fn = Function(
-            self,
-            "NotesCreateFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_create"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
-        table.grant_write_data(create_fn)
-
-        get_fn = Function(
-            self,
-            "NotesGetFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_get"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
-        table.grant_read_data(get_fn)
+        note_fns = self._create_note_functions(table)
 
         # Secrets Manager generates the API key; no credential is stored in source.
         api_key_secret = Secret(
@@ -118,7 +96,7 @@ class TechSummitStack(Stack):
         api = LambdaRestApi(
             self,
             "NotesApi",
-            handler=create_fn,
+            handler=note_fns["create"],
             proxy=False,
             deploy_options=StageOptions(stage_name=environment_name),
             default_method_options=MethodOptions(
@@ -127,17 +105,13 @@ class TechSummitStack(Stack):
             ),
         )
 
-        notes = api.root.add_resource("notes")
-        notes.add_method("POST", LambdaIntegration(create_fn))
+        self._add_routes(api, note_fns)
 
-        note = notes.add_resource("{id}")
-        note.add_method("GET", LambdaIntegration(get_fn))
-
-        # The three Lambda service roles use the standard CDK-managed basic execution
+        # The Lambda service roles use the standard CDK-managed basic execution
         # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
         # demo rather than tracking a newly released runtime automatically.
         NagSuppressions.add_resource_suppressions(
-            [create_fn, get_fn, authorizer_fn],
+            [*note_fns.values(), authorizer_fn],
             [
                 {
                     "id": "AwsSolutions-IAM4",
@@ -174,6 +148,32 @@ class TechSummitStack(Stack):
             ],
         )
 
+        # CDK creates the account-level API Gateway CloudWatch role only when the
+        # ``disableCloudWatchRole`` feature flag is off (it is on in cdk.json, so the
+        # role is absent there). When present, it is the CDK-generated role that uses
+        # the AWS-managed push-to-CloudWatch-Logs policy, the only policy API Gateway
+        # accepts for this purpose; it grants no access to customer data.
+        cloud_watch_role = api.node.try_find_child("CloudWatchRole")
+        if cloud_watch_role is not None:
+            NagSuppressions.add_resource_suppressions(
+                cloud_watch_role,
+                [
+                    {
+                        "id": "AwsSolutions-IAM4",
+                        "reason": (
+                            "API Gateway's account-level CloudWatch role uses the "
+                            "AWS-managed AmazonAPIGatewayPushToCloudWatchLogs policy, "
+                            "which only allows writing logs and is the policy AWS "
+                            "documents for this role."
+                        ),
+                        "appliesTo": [
+                            "Policy::arn:<AWS::Partition>:iam::aws:policy/"
+                            "service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+                        ],
+                    },
+                ],
+            )
+
         # The API is intentionally small and guarded by a custom token authorizer. The
         # suppressed controls are documented demo trade-offs rather than silent skips.
         NagSuppressions.add_resource_suppressions(
@@ -204,4 +204,43 @@ class TechSummitStack(Stack):
                 },
             ],
             apply_to_children=True,
+        )
+
+    def _create_note_functions(self, table: Table) -> dict[str, Function]:
+        """Create one single-purpose Lambda per operation with its narrow table grant."""
+        functions = {
+            "create": self._notes_function("NotesCreateFunction", "notes_create", table),
+            "get": self._notes_function("NotesGetFunction", "notes_get", table),
+            "update": self._notes_function("NotesUpdateFunction", "notes_update", table),
+            "delete": self._notes_function("NotesDeleteFunction", "notes_delete", table),
+        }
+        table.grant_write_data(functions["create"])
+        table.grant_read_data(functions["get"])
+        # Update and delete are version-checked: each needs GetItem to tell a missing
+        # note (404) from a stale version (409), plus exactly one mutating action.
+        table.grant(functions["update"], "dynamodb:GetItem", "dynamodb:UpdateItem")
+        table.grant(functions["delete"], "dynamodb:GetItem", "dynamodb:DeleteItem")
+        return functions
+
+    @staticmethod
+    def _add_routes(api: LambdaRestApi, functions: dict[str, Function]) -> None:
+        """Add explicit methods; the default custom authorizer protects every one."""
+        notes = api.root.add_resource("notes")
+        notes.add_method("POST", LambdaIntegration(functions["create"]))
+
+        note = notes.add_resource("{id}")
+        note.add_method("GET", LambdaIntegration(functions["get"]))
+        note.add_method("PATCH", LambdaIntegration(functions["update"]))
+        note.add_method("DELETE", LambdaIntegration(functions["delete"]))
+
+    def _notes_function(self, construct_id: str, asset_dir: str, table: Table) -> Function:
+        """Create one single-purpose Notes Lambda bound to the Notes table name."""
+        return Function(
+            self,
+            construct_id,
+            runtime=Runtime.PYTHON_3_13,
+            handler="handler.handler",
+            code=Code.from_asset(f"lambda/{asset_dir}"),
+            timeout=Duration.seconds(10),
+            environment={"TABLE_NAME": table.table_name},
         )

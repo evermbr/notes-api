@@ -4,6 +4,9 @@ Single-purpose function: it only reads notes, and its execution role is granted
 read-only access to the table. Invoked through an API Gateway REST (non-proxy)
 integration on the ``/notes/{id}`` resource, which supplies the id as a path parameter.
 
+Notes stored before versioning was introduced have no ``version`` attribute and are
+exposed as version 1.
+
 Failure modes:
   * missing ``id`` path parameter   -> 400
   * no note stored under that id     -> 404
@@ -15,6 +18,7 @@ import os
 import boto3
 
 _TABLE_NAME = os.environ.get("TABLE_NAME", "")
+_LEGACY_VERSION = 1
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -45,5 +49,10 @@ def handler(event: dict, _context=None) -> dict:
 
     return _response(
         200,
-        {"id": item["id"], "title": item["title"], "content": item["content"]},
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "content": item["content"],
+            "version": int(item.get("version", _LEGACY_VERSION)),
+        },
     )

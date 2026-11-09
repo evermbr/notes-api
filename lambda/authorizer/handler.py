@@ -12,7 +12,7 @@ import boto3
 
 _SECRET_ARN = os.environ.get("API_KEY_SECRET_ARN", "")
 _secretsmanager = boto3.client("secretsmanager")
-_cached_key: str | None = None
+_cached_key: str | None = None  # pylint: disable=invalid-name  # mutable module-level cache, not a constant
 
 
 def _expected_key() -> str:
