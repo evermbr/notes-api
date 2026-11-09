@@ -5,6 +5,7 @@ write-only access to the table. Invoked through an API Gateway REST (non-proxy)
 integration on the ``/notes`` resource.
 
 Request body: ``{"title": "...", "content": "..."}`` (both non-empty strings).
+New notes are stored and returned with ``version`` 1 (optimistic concurrency).
 
 Failure modes:
   * malformed JSON body / non-object body         -> 400
@@ -68,6 +69,11 @@ def handler(event: dict, _context=None) -> dict:
             {"error": "Fields 'title' and 'content' must be non-empty strings."},
         )
 
-    note = {"id": _generate_id(), "title": title, "content": content}
+    note = {
+        "id": _generate_id(),
+        "title": title,
+        "content": content,
+        "version": 1,
+    }
     _table().put_item(Item=note)
     return _response(201, note)

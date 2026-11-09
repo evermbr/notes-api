@@ -44,6 +44,7 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
     }
 
     response = handler_module.handler(_get_event("abc123"))
@@ -53,6 +54,23 @@ def test_get_note_found(handler_and_store):
         "id": "abc123",
         "title": "Note",
         "content": "remember this",
+        "version": 3,
+    }
+
+
+def test_get_legacy_note_without_version(handler_and_store):
+    """A note stored before versioning is exposed as version 1."""
+    handler_module, store = handler_and_store
+    store["old"] = {"id": "old", "title": "Legacy", "content": "no version"}
+
+    response = handler_module.handler(_get_event("old"))
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"]) == {
+        "id": "old",
+        "title": "Legacy",
+        "content": "no version",
+        "version": 1,
     }
 
 

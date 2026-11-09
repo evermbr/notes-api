@@ -12,7 +12,8 @@ import boto3
 
 _SECRET_ARN = os.environ.get("API_KEY_SECRET_ARN", "")
 _secretsmanager = boto3.client("secretsmanager")
-_cached_key: str | None = None
+# Mutable per-environment cache, not a constant, so snake_case is intentional.
+_cached_key: str | None = None  # pylint: disable=invalid-name
 
 
 def _expected_key() -> str:

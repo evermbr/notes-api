@@ -27,6 +27,38 @@ from aws_cdk.aws_secretsmanager import Secret, SecretStringGenerator
 from cdk_nag import NagSuppressions
 
 
+def _notes_function(
+    scope: Construct, construct_id: str, asset_dir: str, table: Table
+) -> Function:
+    """Create a single-purpose notes Lambda configured with the table name."""
+    return Function(
+        scope,
+        construct_id,
+        runtime=Runtime.PYTHON_3_13,
+        handler="handler.handler",
+        code=Code.from_asset(asset_dir),
+        timeout=Duration.seconds(10),
+        environment={"TABLE_NAME": table.table_name},
+    )
+
+
+def _add_notes_routes(
+    api: LambdaRestApi,
+    create_fn: Function,
+    get_fn: Function,
+    update_fn: Function,
+    delete_fn: Function,
+) -> None:
+    """Add the explicit per-operation methods; each inherits the default authorizer."""
+    notes = api.root.add_resource("notes")
+    notes.add_method("POST", LambdaIntegration(create_fn))
+
+    note = notes.add_resource("{id}")
+    note.add_method("GET", LambdaIntegration(get_fn))
+    note.add_method("PATCH", LambdaIntegration(update_fn))
+    note.add_method("DELETE", LambdaIntegration(delete_fn))
+
+
 class TechSummitStack(Stack):
     """Provision the authenticated, DynamoDB-backed Notes API."""
 
@@ -61,27 +93,19 @@ class TechSummitStack(Stack):
 
         # One single-purpose Lambda per operation; each gets only the table access
         # required for that operation.
-        create_fn = Function(
-            self,
-            "NotesCreateFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_create"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
+        create_fn = _notes_function(self, "NotesCreateFunction", "lambda/notes_create", table)
         table.grant_write_data(create_fn)
 
-        get_fn = Function(
-            self,
-            "NotesGetFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_get"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
+        get_fn = _notes_function(self, "NotesGetFunction", "lambda/notes_get", table)
         table.grant_read_data(get_fn)
+
+        # Update and delete use optimistic concurrency: a conditional write plus a
+        # GetItem to distinguish a missing note (404) from a stale version (409).
+        update_fn = _notes_function(self, "NotesUpdateFunction", "lambda/notes_update", table)
+        table.grant(update_fn, "dynamodb:GetItem", "dynamodb:UpdateItem")
+
+        delete_fn = _notes_function(self, "NotesDeleteFunction", "lambda/notes_delete", table)
+        table.grant(delete_fn, "dynamodb:GetItem", "dynamodb:DeleteItem")
 
         # Secrets Manager generates the API key; no credential is stored in source.
         api_key_secret = Secret(
@@ -127,17 +151,13 @@ class TechSummitStack(Stack):
             ),
         )
 
-        notes = api.root.add_resource("notes")
-        notes.add_method("POST", LambdaIntegration(create_fn))
+        _add_notes_routes(api, create_fn, get_fn, update_fn, delete_fn)
 
-        note = notes.add_resource("{id}")
-        note.add_method("GET", LambdaIntegration(get_fn))
-
-        # The three Lambda service roles use the standard CDK-managed basic execution
+        # The five Lambda service roles use the standard CDK-managed basic execution
         # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
         # demo rather than tracking a newly released runtime automatically.
         NagSuppressions.add_resource_suppressions(
-            [create_fn, get_fn, authorizer_fn],
+            [create_fn, get_fn, update_fn, delete_fn, authorizer_fn],
             [
                 {
                     "id": "AwsSolutions-IAM4",

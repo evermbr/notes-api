@@ -26,16 +26,61 @@ A **Notes API** with one single-purpose Lambda per operation behind an API Gatew
 API (`proxy=False`) and a shared DynamoDB table:
 
 - `POST /notes` with `{"title": "...", "content": "..."}` →
-  `NotesCreateFunction` stores a note and returns `201` with `{id, title, content}`.
-- `GET /notes/{id}` → `NotesGetFunction` returns the note or `404`.
+  `NotesCreateFunction` stores a note at `version` 1 and returns `201` with
+  `{id, title, content, version}`.
+- `GET /notes/{id}` → `NotesGetFunction` returns `{id, title, content, version}` or `404`.
+  A legacy note stored without a version is reported as version `1`.
+- `PATCH /notes/{id}` → `NotesUpdateFunction` applies a versioned update (see below).
+- `DELETE /notes/{id}` → `NotesDeleteFunction` applies a versioned delete (see below).
 
-The create Lambda has write-only table access; the get Lambda has read-only access. Every
-method uses a Lambda token authorizer backed by an auto-generated Secrets Manager key.
-The authorizer performs a constant-time comparison and returns a stage-wide policy so its
-five-minute cache works across routes.
+The create Lambda has write-only table access and the get Lambda read-only access. The
+update Lambda is granted only `dynamodb:GetItem` and `dynamodb:UpdateItem`; the delete
+Lambda only `dynamodb:GetItem` and `dynamodb:DeleteItem`. Every method uses a Lambda
+token authorizer backed by an auto-generated Secrets Manager key. The authorizer performs
+a constant-time comparison and returns a stage-wide policy so its five-minute cache works
+across routes.
 
-The API surface starts minimal on purpose: list, update and delete are live-demo extension
-points. Add each as a new Lambda + least-privilege grant + explicit API method.
+#### Optimistic concurrency (versioned notes)
+
+Each note carries an integer `version` that starts at `1` and increases by one on every
+successful update. Update and delete require an `If-Match` header (case-insensitive name)
+containing the unquoted positive integer version the client last read.
+
+```http
+PATCH /notes/abc123
+If-Match: 3
+Content-Type: application/json
+
+{"title": "Updated"}
+```
+
+→ `200` with the complete note, e.g. `{"id":"abc123","title":"Updated","content":"...","version":4}`.
+The body must be a JSON object with `title`, `content` or both (non-empty strings);
+unknown fields are rejected.
+
+```http
+DELETE /notes/abc123
+If-Match: 4
+```
+
+→ `204` with an empty body.
+
+| Situation | Status |
+|---|---:|
+| Malformed JSON, unsupported fields or invalid values (update) | 400 |
+| Missing or invalid `If-Match`, or missing id | 400 |
+| Note not found | 404 |
+| Note exists but its version differs from `If-Match` | 409 |
+| Successful update / delete | 200 / 204 |
+| Unexpected DynamoDB error | Raised; the Lambda invocation fails visibly |
+
+The write is a single conditional `UpdateItem`/`DeleteItem`, so the version check and
+change are atomic. Only when DynamoDB reports `ConditionalCheckFailedException` does the
+handler perform a `GetItem` to distinguish `404` from `409`. A legacy note without a
+stored version matches `If-Match: 1` and becomes version `2` after an update.
+
+List is still a live-demo extension point: add it as a new Lambda + least-privilege grant
++ explicit API method.
 
 DynamoDB uses on-demand billing, AWS-managed encryption and point-in-time recovery. In
 `prod`, deletion protection is enabled and both the table and API-key secret are retained;
@@ -84,8 +129,7 @@ injected into CodeBuild as `KIRO_API_KEY`. Source and secret settings live under
   - Demo-only autonomous subagents: `feature-developer` writes within constrained source
     paths; `test-agent` and `review-agent` independently verify changes read-only.
 - **`.kiro/specs/versioned-notes/`** — precommitted requirements, design, and task list
-  for the cloud-session demo; the feature is intentionally not implemented on the base
-  branch.
+  for the cloud-session demo (versioned notes: conditional PATCH and DELETE).
 - **`.kiro/hooks/`** — PostFileSave hooks trigger documentation, quality and security
   checks.
 - **`.kiro/skills/`** — repository-local `linting` and `testing` workflows.
@@ -108,6 +152,8 @@ tech_summit/kiro_cli_step_props.py  # gate configuration
 tech_summit/source_config.py        # SourceConfig and PipelineConfig
 lambda/notes_create/handler.py      # POST /notes (write-only table grant)
 lambda/notes_get/handler.py         # GET /notes/{id} (read-only table grant)
+lambda/notes_update/handler.py      # PATCH /notes/{id} (If-Match; Get+Update only)
+lambda/notes_delete/handler.py      # DELETE /notes/{id} (If-Match; Get+Delete only)
 lambda/authorizer/handler.py        # cached Lambda TOKEN authorizer
 tests/unit/                         # handler and CDK assertion tests
 .gitleaks.toml                     # narrow allowlist over default secret rules
@@ -177,4 +223,11 @@ curl -X POST "$API_URL/notes" \
   -d '{"title": "Shopping", "content": "milk and eggs"}'
 
 curl "$API_URL/notes/<id>" -H "Authorization: $KEY"
+
+curl -X PATCH "$API_URL/notes/<id>" \
+  -H "Authorization: $KEY" -H "If-Match: 1" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Groceries"}'
+
+curl -X DELETE "$API_URL/notes/<id>" -H "Authorization: $KEY" -H "If-Match: 2"
 ```
