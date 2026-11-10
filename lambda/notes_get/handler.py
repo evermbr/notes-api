@@ -14,6 +14,7 @@ import os
 
 import boto3
 
+_LEGACY_VERSION = 1
 _TABLE_NAME = os.environ.get("TABLE_NAME", "")
 
 _dynamodb = boto3.resource("dynamodb")
@@ -45,5 +46,11 @@ def handler(event: dict, _context=None) -> dict:
 
     return _response(
         200,
-        {"id": item["id"], "title": item["title"], "content": item["content"]},
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "content": item["content"],
+            # Legacy items were stored without a version; expose them as version 1.
+            "version": int(item.get("version", _LEGACY_VERSION)),
+        },
     )

@@ -1,5 +1,7 @@
 """CDK assertions for the Notes API application stack."""
 
+import json
+
 from aws_cdk import App, assertions
 
 from tech_summit.tech_summit_stack import TechSummitStack
@@ -60,21 +62,23 @@ def test_production_data_is_protected():
 
 
 def test_notes_lambdas_created():
-    """Create, get and authorizer Lambdas use the supported project runtime."""
+    """Create, get, update, delete and authorizer Lambdas use the supported project runtime."""
     template = _template()
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {"Handler": "handler.handler", "Runtime": "python3.13"},
     )
-    template.resource_count_is("AWS::Lambda::Function", 3)
+    template.resource_count_is("AWS::Lambda::Function", 5)
 
 
 def test_methods_wired_per_operation():
-    """The API exposes exactly one POST and one GET operation."""
+    """The API exposes explicit POST, GET, PATCH and DELETE operations."""
     template = _template()
     methods = template.find_resources("AWS::ApiGateway::Method")
     assert {resource["Properties"]["HttpMethod"] for resource in methods.values()} == {
+        "DELETE",
         "GET",
+        "PATCH",
         "POST",
     }
     assert all(
@@ -123,6 +127,59 @@ def test_least_privilege_table_grants():
                 )
             }
         },
+    )
+
+
+def _function_logical_id(template, prefix):
+    functions = template.find_resources("AWS::Lambda::Function")
+    matches = [key for key in functions if key.startswith(prefix)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _dynamodb_actions_for(template, role_prefix):
+    """Return the DynamoDB actions granted to the role of one function."""
+    actions = set()
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        roles = policy["Properties"]["Roles"]
+        if not any(role["Ref"].startswith(role_prefix) for role in roles):
+            continue
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement["Action"]
+            action = [action] if isinstance(action, str) else action
+            actions.update(a for a in action if a.startswith("dynamodb:"))
+    return actions
+
+
+def test_update_and_delete_lambdas_have_exact_actions():
+    """Update gets only Get+Update; delete gets only Get+Delete (no wildcards)."""
+    template = _template()
+    assert _function_logical_id(template, "NotesUpdateFunction")
+    assert _function_logical_id(template, "NotesDeleteFunction")
+    assert _dynamodb_actions_for(template, "NotesUpdateFunction") == {
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+    }
+    assert _dynamodb_actions_for(template, "NotesDeleteFunction") == {
+        "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+    }
+
+
+def test_patch_and_delete_methods_use_custom_authorizer_on_id_resource():
+    """PATCH and DELETE are explicit, custom-authorized, and routed to own Lambdas."""
+    template = _template()
+    methods = template.find_resources("AWS::ApiGateway::Method")
+    by_verb = {
+        res["Properties"]["HttpMethod"]: res["Properties"] for res in methods.values()
+    }
+    for verb, function in (("PATCH", "NotesUpdateFunction"), ("DELETE", "NotesDeleteFunction")):
+        props = by_verb[verb]
+        assert props["AuthorizationType"] == "CUSTOM"
+        assert "AuthorizerId" in props
+        assert function in json.dumps(props["Integration"]["Uri"])
+    template.has_resource_properties(
+        "AWS::ApiGateway::Resource", {"PathPart": "{id}"}
     )
 
 
