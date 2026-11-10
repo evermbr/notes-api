@@ -44,7 +44,9 @@ def test_create_note_success(handler_and_store):
     body = json.loads(response["body"])
     assert body["title"] == "Shopping"
     assert body["content"] == "milk and eggs"
+    assert body["version"] == 1
     assert len(body["id"]) == 10
+    assert store[body["id"]]["version"] == 1
     assert store[body["id"]]["content"] == "milk and eggs"
 
 

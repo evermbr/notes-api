@@ -61,27 +61,19 @@ class TechSummitStack(Stack):
 
         # One single-purpose Lambda per operation; each gets only the table access
         # required for that operation.
-        create_fn = Function(
-            self,
-            "NotesCreateFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_create"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
+        create_fn = self._notes_function("NotesCreateFunction", "notes_create", table)
         table.grant_write_data(create_fn)
 
-        get_fn = Function(
-            self,
-            "NotesGetFunction",
-            runtime=Runtime.PYTHON_3_13,
-            handler="handler.handler",
-            code=Code.from_asset("lambda/notes_get"),
-            timeout=Duration.seconds(10),
-            environment={"TABLE_NAME": table.table_name},
-        )
+        get_fn = self._notes_function("NotesGetFunction", "notes_get", table)
         table.grant_read_data(get_fn)
+
+        # Update/delete use explicit, minimal actions (GetItem is needed to tell a
+        # missing note, 404, from a stale version, 409, after a conditional failure).
+        update_fn = self._notes_function("NotesUpdateFunction", "notes_update", table)
+        table.grant(update_fn, "dynamodb:GetItem", "dynamodb:UpdateItem")
+
+        delete_fn = self._notes_function("NotesDeleteFunction", "notes_delete", table)
+        table.grant(delete_fn, "dynamodb:GetItem", "dynamodb:DeleteItem")
 
         # Secrets Manager generates the API key; no credential is stored in source.
         api_key_secret = Secret(
@@ -127,81 +119,111 @@ class TechSummitStack(Stack):
             ),
         )
 
-        notes = api.root.add_resource("notes")
-        notes.add_method("POST", LambdaIntegration(create_fn))
+        _add_routes(api, create_fn, get_fn, update_fn, delete_fn)
 
-        note = notes.add_resource("{id}")
-        note.add_method("GET", LambdaIntegration(get_fn))
-
-        # The three Lambda service roles use the standard CDK-managed basic execution
-        # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
-        # demo rather than tracking a newly released runtime automatically.
-        NagSuppressions.add_resource_suppressions(
-            [create_fn, get_fn, authorizer_fn],
-            [
-                {
-                    "id": "AwsSolutions-IAM4",
-                    "reason": (
-                        "Lambda execution role uses AWSLambdaBasicExecutionRole only "
-                        "for standard CloudWatch Logs write access."
-                    ),
-                    "appliesTo": [
-                        "Policy::arn:<AWS::Partition>:iam::aws:policy/"
-                        "service-role/AWSLambdaBasicExecutionRole"
-                    ],
-                },
-                {
-                    "id": "AwsSolutions-L1",
-                    "reason": (
-                        "Python 3.13 is the supported runtime selected for this demo; "
-                        "runtime upgrades are tested and performed deliberately."
-                    ),
-                },
-            ],
-            apply_to_children=True,
-        )
-
-        NagSuppressions.add_resource_suppressions(
+        _add_nag_suppressions(
+            [create_fn, get_fn, update_fn, delete_fn, authorizer_fn],
             api_key_secret,
-            [
-                {
-                    "id": "AwsSolutions-SMG4",
-                    "reason": (
-                        "This demo uses a generated API key without a rotation-aware "
-                        "consumer; automatic rotation is outside its scope."
-                    ),
-                },
-            ],
+            api,
         )
 
-        # The API is intentionally small and guarded by a custom token authorizer. The
-        # suppressed controls are documented demo trade-offs rather than silent skips.
-        NagSuppressions.add_resource_suppressions(
-            api,
-            [
-                {
-                    "id": "AwsSolutions-APIG1",
-                    "reason": "Access logging is outside the scope of this short demo.",
-                },
-                {
-                    "id": "AwsSolutions-APIG2",
-                    "reason": "Each single-purpose Lambda validates its request input.",
-                },
-                {
-                    "id": "AwsSolutions-APIG6",
-                    "reason": "Per-method logging is outside the scope of this demo.",
-                },
-                {
-                    "id": "AwsSolutions-APIG3",
-                    "reason": "A WAF web ACL is outside the scope of this demo.",
-                },
-                {
-                    "id": "AwsSolutions-COG4",
-                    "reason": (
-                        "Every method uses the intended Lambda token authorizer instead "
-                        "of a Cognito user-pool authorizer."
-                    ),
-                },
-            ],
-            apply_to_children=True,
+    def _notes_function(
+        self, construct_id: str, directory: str, table: Table
+    ) -> Function:
+        """Create one single-purpose Notes Lambda from its own asset directory."""
+        return Function(
+            self,
+            construct_id,
+            runtime=Runtime.PYTHON_3_13,
+            handler="handler.handler",
+            code=Code.from_asset(f"lambda/{directory}"),
+            timeout=Duration.seconds(10),
+            environment={"TABLE_NAME": table.table_name},
         )
+
+
+def _add_routes(api, create_fn, get_fn, update_fn, delete_fn) -> None:
+    """Wire explicit methods; each maps to one single-purpose Lambda."""
+    notes = api.root.add_resource("notes")
+    notes.add_method("POST", LambdaIntegration(create_fn))
+
+    note = notes.add_resource("{id}")
+    note.add_method("GET", LambdaIntegration(get_fn))
+    note.add_method("PATCH", LambdaIntegration(update_fn))
+    note.add_method("DELETE", LambdaIntegration(delete_fn))
+
+
+def _add_nag_suppressions(functions, api_key_secret, api) -> None:
+    """Add documented, resource-scoped cdk-nag suppressions for demo trade-offs."""
+    # The five Lambda service roles use the standard CDK-managed basic execution
+    # policy solely for CloudWatch Logs. Python 3.13 is deliberately pinned for the
+    # demo rather than tracking a newly released runtime automatically.
+    NagSuppressions.add_resource_suppressions(
+        functions,
+        [
+            {
+                "id": "AwsSolutions-IAM4",
+                "reason": (
+                    "Lambda execution role uses AWSLambdaBasicExecutionRole only "
+                    "for standard CloudWatch Logs write access."
+                ),
+                "appliesTo": [
+                    "Policy::arn:<AWS::Partition>:iam::aws:policy/"
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ],
+            },
+            {
+                "id": "AwsSolutions-L1",
+                "reason": (
+                    "Python 3.13 is the supported runtime selected for this demo; "
+                    "runtime upgrades are tested and performed deliberately."
+                ),
+            },
+        ],
+        apply_to_children=True,
+    )
+
+    NagSuppressions.add_resource_suppressions(
+        api_key_secret,
+        [
+            {
+                "id": "AwsSolutions-SMG4",
+                "reason": (
+                    "This demo uses a generated API key without a rotation-aware "
+                    "consumer; automatic rotation is outside its scope."
+                ),
+            },
+        ],
+    )
+
+    # The API is intentionally small and guarded by a custom token authorizer. The
+    # suppressed controls are documented demo trade-offs rather than silent skips.
+    NagSuppressions.add_resource_suppressions(
+        api,
+        [
+            {
+                "id": "AwsSolutions-APIG1",
+                "reason": "Access logging is outside the scope of this short demo.",
+            },
+            {
+                "id": "AwsSolutions-APIG2",
+                "reason": "Each single-purpose Lambda validates its request input.",
+            },
+            {
+                "id": "AwsSolutions-APIG6",
+                "reason": "Per-method logging is outside the scope of this demo.",
+            },
+            {
+                "id": "AwsSolutions-APIG3",
+                "reason": "A WAF web ACL is outside the scope of this demo.",
+            },
+            {
+                "id": "AwsSolutions-COG4",
+                "reason": (
+                    "Every method uses the intended Lambda token authorizer instead "
+                    "of a Cognito user-pool authorizer."
+                ),
+            },
+        ],
+        apply_to_children=True,
+    )

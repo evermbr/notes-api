@@ -6,6 +6,8 @@ integration on the ``/notes`` resource.
 
 Request body: ``{"title": "...", "content": "..."}`` (both non-empty strings).
 
+Created notes are stored and returned with integer ``version`` 1.
+
 Failure modes:
   * malformed JSON body / non-object body         -> 400
   * missing or empty ``title`` / ``content``       -> 400
@@ -21,6 +23,7 @@ import boto3
 _TABLE_NAME = os.environ.get("TABLE_NAME", "")
 _ID_ALPHABET = string.ascii_letters + string.digits
 _ID_LENGTH = 10
+_INITIAL_VERSION = 1
 
 _dynamodb = boto3.resource("dynamodb")
 
@@ -68,6 +71,11 @@ def handler(event: dict, _context=None) -> dict:
             {"error": "Fields 'title' and 'content' must be non-empty strings."},
         )
 
-    note = {"id": _generate_id(), "title": title, "content": content}
+    note = {
+        "id": _generate_id(),
+        "title": title,
+        "content": content,
+        "version": _INITIAL_VERSION,
+    }
     _table().put_item(Item=note)
     return _response(201, note)
